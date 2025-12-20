@@ -10,10 +10,39 @@ struct RootView_macOS: View {
 
         NavigationSplitView {
             SidebarView()
-        } content: {
-            ContentListView()
         } detail: {
-            DetailView()
+            NavigationStack(path: $appState.navigationPath) {
+                // Aggregate view based on sidebar selection
+                Group {
+                    switch appState.sidebarSelection {
+                    case .chats:
+                        ChatListView()
+                    case .characters:
+                        CharacterListView()
+                    case .groups:
+                        GroupListView()
+                    case .worldInfo:
+                        WorldInfoListView()
+                    case .settings:
+                        SettingsView()
+                    case .none:
+                        ContentUnavailableView(
+                            "Select an Item",
+                            systemImage: "sidebar.left",
+                            description: Text("Choose from the sidebar")
+                        )
+                    }
+                }
+                .navigationDestination(for: CharacterCard.self) { character in
+                    ChatDetailView_macOS(character: character)
+                }
+                .navigationDestination(for: WorldInfoBook.self) { book in
+                    WorldInfoBookDetailView(book: book)
+                }
+                .navigationDestination(for: CharacterGroup.self) { group in
+                    GroupDetailView(group: group)
+                }
+            }
         }
         .inspector(isPresented: $appState.isInspectorPresented) {
             InspectorView()
@@ -59,46 +88,6 @@ struct SidebarView: View {
     }
 }
 
-// MARK: - Content List
-
-struct ContentListView: View {
-    @Environment(AppState.self) private var appState
-
-    var body: some View {
-        NavigationStack {
-            Group {
-                switch appState.sidebarSelection {
-                case .chats:
-                    ChatListView()
-                case .characters:
-                    CharacterListView()
-                case .groups:
-                    GroupListView()
-                case .worldInfo:
-                    WorldInfoListView()
-                case .settings:
-                    SettingsListView()
-                case .none:
-                    ContentUnavailableView(
-                        "Select an Item",
-                        systemImage: "sidebar.left",
-                        description: Text("Choose from the sidebar")
-                    )
-                }
-            }
-            .navigationDestination(for: CharacterCard.self) { character in
-                CharacterDetailView(character: character)
-            }
-            .navigationDestination(for: WorldInfoBook.self) { book in
-                WorldInfoBookDetailView(book: book)
-            }
-            .navigationDestination(for: CharacterGroup.self) { group in
-                GroupDetailView(group: group)
-            }
-        }
-    }
-}
-
 struct ChatListView: View {
     @Environment(AppState.self) private var appState
 
@@ -128,31 +117,7 @@ struct ChatListView: View {
     }
 }
 
-// CharacterListView_macOS and WorldInfoListView replaced by shared components
-
-struct SettingsListView: View {
-    var body: some View {
-        SettingsView()
-    }
-}
-
-// MARK: - Detail View
-
-struct DetailView: View {
-    @Environment(AppState.self) private var appState
-
-    var body: some View {
-        if let character = appState.activeCharacter {
-            ChatDetailView_macOS(character: character)
-        } else {
-            ContentUnavailableView(
-                "No Chat Selected",
-                systemImage: "bubble.left.and.bubble.right",
-                description: Text("Select a character to start chatting")
-            )
-        }
-    }
-}
+// MARK: - Chat Detail View
 
 struct ChatDetailView_macOS: View {
     let character: CharacterCard

@@ -85,6 +85,7 @@ final class AppState {
     func newChat(with character: CharacterCard) {
         self.activeCharacter = character
         self.activeChat = Chat(characterID: character.id)
+        self.chatState.clearChat()
         self.navigationPath.append(character)
     }
 
