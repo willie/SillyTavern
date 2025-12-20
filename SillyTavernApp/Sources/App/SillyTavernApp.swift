@@ -1,7 +1,23 @@
 import SwiftUI
+#if os(macOS)
+import AppKit
+#endif
+
+#if os(macOS)
+class AppDelegate: NSObject, NSApplicationDelegate {
+    func applicationDidFinishLaunching(_ notification: Notification) {
+        NSApp.setActivationPolicy(.regular)
+        NSApp.activate(ignoringOtherApps: true)
+        NSApp.windows.first?.makeKeyAndOrderFront(nil)
+    }
+}
+#endif
 
 @main
 struct SillyTavernApp: App {
+    #if os(macOS)
+    @NSApplicationDelegateAdaptor(AppDelegate.self) var appDelegate
+    #endif
     @State private var appState = AppState()
 
     var body: some Scene {
