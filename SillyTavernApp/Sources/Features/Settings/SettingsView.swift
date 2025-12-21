@@ -5,6 +5,7 @@ import SwiftUI
 struct SettingsView: View {
     @Environment(AppState.self) private var appState
     @State private var selectedSection: SettingsSection? = .api
+    @State private var showingModelPicker = false
 
     var body: some View {
         @Bindable var settings = appState.settings
@@ -23,6 +24,10 @@ struct SettingsView: View {
             } else {
                 ContentUnavailableView("Select a Section", systemImage: "gear")
             }
+        }
+        .sheet(isPresented: $showingModelPicker) {
+            OpenRouterModelPicker()
+                .environment(appState)
         }
         #else
         Form {
@@ -67,25 +72,39 @@ struct SettingsView: View {
     private var apiSection: some View {
         @Bindable var settings = appState.settings
 
-        return Section {
-            Picker("Provider", selection: $settings.selectedProvider) {
-                Text("OpenAI").tag("openai")
-                Text("Claude").tag("claude")
-                Text("OpenRouter").tag("openrouter")
-                Text("Custom").tag("custom")
+        return Group {
+            Section("API Provider") {
+                Picker("Provider", selection: $settings.selectedProvider) {
+                    Text("OpenAI").tag("openai")
+                    Text("Claude").tag("claude")
+                    Text("OpenRouter").tag("openrouter")
+                    Text("Custom").tag("custom")
+                }
+
+                SecureField("API Key", text: $settings.apiKey)
+                    .textContentType(.password)
+
+                if settings.selectedProvider == "custom" {
+                    TextField("Base URL", text: $settings.baseURL)
+                        .textContentType(.URL)
+                }
             }
 
-            SecureField("API Key", text: $settings.apiKey)
-                .textContentType(.password)
-
-            if settings.selectedProvider == "custom" || settings.selectedProvider == "openrouter" {
-                TextField("Base URL", text: $settings.baseURL)
-                    .textContentType(.URL)
+            if settings.selectedProvider == "openrouter" {
+                Section("OpenRouter Model") {
+                    HStack {
+                        VStack(alignment: .leading, spacing: 4) {
+                            Text(settings.model.isEmpty ? "No model selected" : settings.model)
+                                .font(.body)
+                        }
+                        Spacer()
+                        Button("Browse Models") {
+                            showingModelPicker = true
+                        }
+                        .buttonStyle(.borderedProminent)
+                    }
+                }
             }
-        } header: {
-            Text("API Provider")
-        } footer: {
-            Text("Your API key is stored securely and never shared.")
         }
     }
 
@@ -95,14 +114,36 @@ struct SettingsView: View {
         @Bindable var settings = appState.settings
 
         return Section {
-            Picker("Model", selection: $settings.model) {
-                ForEach(suggestedModels, id: \.self) { model in
-                    Text(model).tag(model)
+            if appState.settings.selectedProvider == "openrouter" {
+                // OpenRouter model picker
+                HStack {
+                    VStack(alignment: .leading, spacing: 4) {
+                        Text("Model")
+                            .foregroundStyle(.secondary)
+                        Text(settings.model.isEmpty ? "Not selected" : settings.model)
+                            .font(.headline)
+                    }
+                    Spacer()
+                    Button("Browse") {
+                        showingModelPicker = true
+                    }
+                    .buttonStyle(.bordered)
                 }
+                .sheet(isPresented: $showingModelPicker) {
+                    OpenRouterModelPicker()
+                        .environment(appState)
+                }
+            } else {
+                // Standard picker for other providers
+                Picker("Model", selection: $settings.model) {
+                    ForEach(suggestedModels, id: \.self) { model in
+                        Text(model).tag(model)
+                    }
+                }
+                #if os(iOS)
+                .pickerStyle(.navigationLink)
+                #endif
             }
-            #if os(iOS)
-            .pickerStyle(.navigationLink)
-            #endif
 
             Stepper("Max Context: \(TokenCounter.format(settings.maxContextTokens))",
                     value: $settings.maxContextTokens,
@@ -116,7 +157,11 @@ struct SettingsView: View {
         } header: {
             Text("Model Settings")
         } footer: {
-            Text("Select a model or enter a custom model identifier")
+            if appState.settings.selectedProvider == "openrouter" {
+                Text("Browse OpenRouter's catalog of 200+ models")
+            } else {
+                Text("Select a model or enter a custom model identifier")
+            }
         }
     }
 

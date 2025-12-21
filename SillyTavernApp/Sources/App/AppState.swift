@@ -207,54 +207,130 @@ final class CharacterStore {
 
 @Observable @MainActor
 final class SettingsStore {
+    private let defaults = UserDefaults.standard
+
     // API Configuration
-    var selectedProvider: String = "openai"
-    var apiKey: String = ""
-    var baseURL: String = ""
+    var selectedProvider: String = "openai" {
+        didSet { defaults.set(selectedProvider, forKey: "settings.provider") }
+    }
+    var apiKey: String = "" {
+        didSet { defaults.set(apiKey, forKey: "settings.apiKey") }
+    }
+    var baseURL: String = "" {
+        didSet { defaults.set(baseURL, forKey: "settings.baseURL") }
+    }
 
     // Model Settings
-    var model: String = "gpt-4o"
-    var maxContextTokens: Int = 8192
-    var maxResponseTokens: Int = 1024
+    var model: String = "gpt-4o" {
+        didSet { defaults.set(model, forKey: "settings.model") }
+    }
+    var maxContextTokens: Int = 8192 {
+        didSet { defaults.set(maxContextTokens, forKey: "settings.maxContextTokens") }
+    }
+    var maxResponseTokens: Int = 1024 {
+        didSet { defaults.set(maxResponseTokens, forKey: "settings.maxResponseTokens") }
+    }
 
     // Generation Settings
-    var temperature: Double = 0.7
-    var topP: Double = 1.0
-    var frequencyPenalty: Double = 0.0
-    var presencePenalty: Double = 0.0
+    var temperature: Double = 0.7 {
+        didSet { defaults.set(temperature, forKey: "settings.temperature") }
+    }
+    var topP: Double = 1.0 {
+        didSet { defaults.set(topP, forKey: "settings.topP") }
+    }
+    var frequencyPenalty: Double = 0.0 {
+        didSet { defaults.set(frequencyPenalty, forKey: "settings.frequencyPenalty") }
+    }
+    var presencePenalty: Double = 0.0 {
+        didSet { defaults.set(presencePenalty, forKey: "settings.presencePenalty") }
+    }
 
     // Prompt Settings
-    var mainPrompt: String = "Write {{char}}'s next reply in a fictional chat between {{char}} and {{user}}."
-    var jailbreakPrompt: String = ""
+    var mainPrompt: String = "Write {{char}}'s next reply in a fictional chat between {{char}} and {{user}}." {
+        didSet { defaults.set(mainPrompt, forKey: "settings.mainPrompt") }
+    }
+    var jailbreakPrompt: String = "" {
+        didSet { defaults.set(jailbreakPrompt, forKey: "settings.jailbreakPrompt") }
+    }
 
     // Author's Note
-    var authorsNote: String = ""
-    var authorsNoteDepth: Int = 4
-    var authorsNotePosition: String = "afterAN"  // beforeAN, afterAN
+    var authorsNote: String = "" {
+        didSet { defaults.set(authorsNote, forKey: "settings.authorsNote") }
+    }
+    var authorsNoteDepth: Int = 4 {
+        didSet { defaults.set(authorsNoteDepth, forKey: "settings.authorsNoteDepth") }
+    }
+    var authorsNotePosition: String = "afterAN" {
+        didSet { defaults.set(authorsNotePosition, forKey: "settings.authorsNotePosition") }
+    }
 
     // Persona
-    var personaName: String = "User"
-    var personaDescription: String = ""
+    var personaName: String = "User" {
+        didSet { defaults.set(personaName, forKey: "settings.personaName") }
+    }
+    var personaDescription: String = "" {
+        didSet { defaults.set(personaDescription, forKey: "settings.personaDescription") }
+    }
 
     private let fileStore = FileStore()
 
     func load() async {
-        // Load settings from UserDefaults for now
-        if let key = UserDefaults.standard.string(forKey: "apiKey") {
-            apiKey = key
-        }
-        if let provider = UserDefaults.standard.string(forKey: "provider") {
+        // Load all settings from UserDefaults
+        if let provider = defaults.string(forKey: "settings.provider") {
             selectedProvider = provider
         }
-        if let savedModel = UserDefaults.standard.string(forKey: "model") {
+        if let key = defaults.string(forKey: "settings.apiKey") {
+            apiKey = key
+        }
+        if let url = defaults.string(forKey: "settings.baseURL") {
+            baseURL = url
+        }
+        if let savedModel = defaults.string(forKey: "settings.model") {
             model = savedModel
+        }
+        if defaults.object(forKey: "settings.maxContextTokens") != nil {
+            maxContextTokens = defaults.integer(forKey: "settings.maxContextTokens")
+        }
+        if defaults.object(forKey: "settings.maxResponseTokens") != nil {
+            maxResponseTokens = defaults.integer(forKey: "settings.maxResponseTokens")
+        }
+        if defaults.object(forKey: "settings.temperature") != nil {
+            temperature = defaults.double(forKey: "settings.temperature")
+        }
+        if defaults.object(forKey: "settings.topP") != nil {
+            topP = defaults.double(forKey: "settings.topP")
+        }
+        if defaults.object(forKey: "settings.frequencyPenalty") != nil {
+            frequencyPenalty = defaults.double(forKey: "settings.frequencyPenalty")
+        }
+        if defaults.object(forKey: "settings.presencePenalty") != nil {
+            presencePenalty = defaults.double(forKey: "settings.presencePenalty")
+        }
+        if let prompt = defaults.string(forKey: "settings.mainPrompt") {
+            mainPrompt = prompt
+        }
+        if let jailbreak = defaults.string(forKey: "settings.jailbreakPrompt") {
+            jailbreakPrompt = jailbreak
+        }
+        if let note = defaults.string(forKey: "settings.authorsNote") {
+            authorsNote = note
+        }
+        if defaults.object(forKey: "settings.authorsNoteDepth") != nil {
+            authorsNoteDepth = defaults.integer(forKey: "settings.authorsNoteDepth")
+        }
+        if let position = defaults.string(forKey: "settings.authorsNotePosition") {
+            authorsNotePosition = position
+        }
+        if let name = defaults.string(forKey: "settings.personaName") {
+            personaName = name
+        }
+        if let desc = defaults.string(forKey: "settings.personaDescription") {
+            personaDescription = desc
         }
     }
 
     func save() {
-        UserDefaults.standard.set(apiKey, forKey: "apiKey")
-        UserDefaults.standard.set(selectedProvider, forKey: "provider")
-        UserDefaults.standard.set(model, forKey: "model")
+        // All settings auto-save via didSet, this is kept for manual saves if needed
     }
 
     /// Create an LLM provider based on current settings
