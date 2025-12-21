@@ -105,6 +105,7 @@ final class AppState {
             character: character,
             provider: settings.createProvider(),
             settings: settings.createPromptSettings(),
+            options: settings.createLLMOptions(),
             worldInfo: worldInfo.allEntries,
             extensionPrompts: settings.createExtensionPrompts(),
             tokenizer: settings.createTokenizer(),
@@ -129,6 +130,7 @@ final class AppState {
             character: character,
             provider: settings.createProvider(),
             settings: settings.createPromptSettings(),
+            options: settings.createLLMOptions(),
             worldInfo: worldInfo.allEntries,
             extensionPrompts: settings.createExtensionPrompts(),
             tokenizer: settings.createTokenizer(),
@@ -292,11 +294,23 @@ final class SettingsStore {
     var topP: Double = 1.0 {
         didSet { defaults.set(topP, forKey: "settings.topP") }
     }
+    var topK: Int = 0 {
+        didSet { defaults.set(topK, forKey: "settings.topK") }
+    }
+    var minP: Double = 0.0 {
+        didSet { defaults.set(minP, forKey: "settings.minP") }
+    }
     var frequencyPenalty: Double = 0.0 {
         didSet { defaults.set(frequencyPenalty, forKey: "settings.frequencyPenalty") }
     }
     var presencePenalty: Double = 0.0 {
         didSet { defaults.set(presencePenalty, forKey: "settings.presencePenalty") }
+    }
+    var repetitionPenalty: Double = 1.0 {
+        didSet { defaults.set(repetitionPenalty, forKey: "settings.repetitionPenalty") }
+    }
+    var seed: Int = -1 {
+        didSet { defaults.set(seed, forKey: "settings.seed") }
     }
 
     // Prompt Settings
@@ -360,6 +374,18 @@ final class SettingsStore {
         if defaults.object(forKey: "settings.presencePenalty") != nil {
             presencePenalty = defaults.double(forKey: "settings.presencePenalty")
         }
+        if defaults.object(forKey: "settings.topK") != nil {
+            topK = defaults.integer(forKey: "settings.topK")
+        }
+        if defaults.object(forKey: "settings.minP") != nil {
+            minP = defaults.double(forKey: "settings.minP")
+        }
+        if defaults.object(forKey: "settings.repetitionPenalty") != nil {
+            repetitionPenalty = defaults.double(forKey: "settings.repetitionPenalty")
+        }
+        if defaults.object(forKey: "settings.seed") != nil {
+            seed = defaults.integer(forKey: "settings.seed")
+        }
         if let prompt = defaults.string(forKey: "settings.mainPrompt") {
             mainPrompt = prompt
         }
@@ -404,6 +430,14 @@ final class SettingsStore {
             let url = baseURL.isEmpty ? URL(string: "https://openrouter.ai/api/v1")! : URL(string: baseURL)!
             return OpenRouterProvider(apiKey: apiKey, baseURL: url)
 
+        case "gemini":
+            let url = baseURL.isEmpty ? URL(string: "https://generativelanguage.googleapis.com/v1beta")! : URL(string: baseURL)!
+            return GeminiProvider(apiKey: apiKey, baseURL: url)
+
+        case "mistral":
+            let url = baseURL.isEmpty ? URL(string: "https://api.mistral.ai/v1")! : URL(string: baseURL)!
+            return MistralProvider(apiKey: apiKey, baseURL: url)
+
         case "custom":
             // Custom provider uses OpenAI-compatible API format
             guard let url = URL(string: baseURL), !baseURL.isEmpty else { return nil }
@@ -443,6 +477,22 @@ final class SettingsStore {
     /// Create a tokenizer for the current model
     func createTokenizer() -> any Tokenizer {
         TokenCounter.tokenizer(for: model)
+    }
+
+    /// Create LLM options from current settings
+    func createLLMOptions() -> LLMOptions {
+        LLMOptions(
+            maxTokens: maxResponseTokens,
+            temperature: temperature,
+            topP: topP,
+            topK: topK > 0 ? topK : nil,
+            minP: minP > 0 ? minP : nil,
+            frequencyPenalty: frequencyPenalty,
+            presencePenalty: presencePenalty,
+            repetitionPenalty: repetitionPenalty != 1.0 ? repetitionPenalty : nil,
+            seed: seed >= 0 ? seed : nil,
+            stopSequences: []
+        )
     }
 }
 

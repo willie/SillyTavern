@@ -123,8 +123,12 @@ struct LLMOptions: Sendable {
     var maxTokens: Int = 2048
     var temperature: Double = 0.7
     var topP: Double = 1.0
+    var topK: Int? = nil
+    var minP: Double? = nil
     var frequencyPenalty: Double = 0.0
     var presencePenalty: Double = 0.0
+    var repetitionPenalty: Double? = nil
+    var seed: Int? = nil
     var stopSequences: [String] = []
 
     static let `default` = LLMOptions()

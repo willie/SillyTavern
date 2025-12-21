@@ -1,31 +1,22 @@
 import Foundation
 
-// MARK: - OpenRouter Provider
+// MARK: - Mistral Provider
 
-/// Provider for OpenRouter API.
-/// Routes to various models (OpenAI, Anthropic, Meta, Mistral, etc.) through a unified API.
-struct OpenRouterProvider: LLMProvider {
-    let id = "openrouter"
-    let name = "OpenRouter"
+/// Provider for Mistral AI API.
+/// Supports Mistral models including Large, Medium, Small, and Codestral.
+struct MistralProvider: LLMProvider {
+    let id = "mistral"
+    let name = "Mistral"
     let supportsStreaming = true
     let supportsVision = true
     let supportsTools = true
 
     private let apiKey: String
     private let baseURL: URL
-    private let appName: String
-    private let siteURL: String?
 
-    init(
-        apiKey: String,
-        baseURL: URL = URL(string: "https://openrouter.ai/api/v1")!,
-        appName: String = "SillyTavern",
-        siteURL: String? = nil
-    ) {
+    init(apiKey: String, baseURL: URL = URL(string: "https://api.mistral.ai/v1")!) {
         self.apiKey = apiKey
         self.baseURL = baseURL
-        self.appName = appName
-        self.siteURL = siteURL
     }
 
     // MARK: - Streaming
@@ -49,14 +40,6 @@ struct OpenRouterProvider: LLMProvider {
 
                     if httpResponse.statusCode == 401 {
                         continuation.finish(throwing: LLMError.invalidAPIKey)
-                        return
-                    }
-
-                    if httpResponse.statusCode == 402 {
-                        continuation.finish(throwing: LLMError.serverError(
-                            statusCode: 402,
-                            message: "Insufficient credits. Please add credits to your OpenRouter account."
-                        ))
                         return
                     }
 
@@ -127,13 +110,6 @@ struct OpenRouterProvider: LLMProvider {
             throw LLMError.invalidAPIKey
         }
 
-        if httpResponse.statusCode == 402 {
-            throw LLMError.serverError(
-                statusCode: 402,
-                message: "Insufficient credits. Please add credits to your OpenRouter account."
-            )
-        }
-
         if httpResponse.statusCode == 429 {
             let retryAfter = httpResponse.value(forHTTPHeaderField: "Retry-After")
                 .flatMap { TimeInterval($0) }
@@ -170,15 +146,14 @@ struct OpenRouterProvider: LLMProvider {
             return defaultModels
         }
 
-        let modelsResponse = try JSONDecoder().decode(OpenRouterModelsResponse.self, from: data)
+        let modelsResponse = try JSONDecoder().decode(ModelsResponse.self, from: data)
 
         return modelsResponse.data.map { model in
             LLMModel(
                 id: model.id,
-                name: model.name,
-                contextLength: model.contextLength,
-                supportsVision: model.architecture?.modality?.contains("image") ?? false,
-                supportsTools: true  // Most models support tools through OpenRouter
+                contextLength: contextLength(for: model.id),
+                supportsVision: model.id.contains("pixtral"),
+                supportsTools: true
             )
         }
     }
@@ -186,17 +161,8 @@ struct OpenRouterProvider: LLMProvider {
     // MARK: - Token Counting
 
     func countTokens(_ text: String, model: String) -> Int {
-        // Use appropriate estimation based on model family
-        let modelLower = model.lowercased()
-
-        if modelLower.contains("claude") {
-            return Int(Double(text.count) / 3.8)
-        } else if modelLower.contains("llama") || modelLower.contains("mistral") {
-            return Int(Double(text.count) / 3.5)
-        } else {
-            // Default GPT-style tokenization
-            return text.count / 4
-        }
+        // Mistral uses similar tokenization to other LLMs
+        return text.count / 4
     }
 
     // MARK: - Private Helpers
@@ -212,18 +178,14 @@ struct OpenRouterProvider: LLMProvider {
         request.setValue("Bearer \(apiKey)", forHTTPHeaderField: "Authorization")
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
 
-        // OpenRouter-specific headers
-        request.setValue(appName, forHTTPHeaderField: "X-Title")
-        if let siteURL = siteURL {
-            request.setValue(siteURL, forHTTPHeaderField: "HTTP-Referer")
-        }
-
         var body: [String: Any] = [
             "model": model,
             "messages": messages.map { messageToDict($0) },
-            "max_tokens": options.maxTokens,
             "stream": stream
         ]
+
+        // Add max_tokens
+        body["max_tokens"] = options.maxTokens
 
         // Add optional parameters
         if options.temperature != 0.7 {
@@ -232,30 +194,18 @@ struct OpenRouterProvider: LLMProvider {
         if options.topP != 1.0 {
             body["top_p"] = options.topP
         }
-        if let topK = options.topK {
-            body["top_k"] = topK
-        }
-        if let minP = options.minP {
-            body["min_p"] = minP
-        }
         if options.frequencyPenalty != 0.0 {
             body["frequency_penalty"] = options.frequencyPenalty
         }
         if options.presencePenalty != 0.0 {
             body["presence_penalty"] = options.presencePenalty
         }
-        if let repetitionPenalty = options.repetitionPenalty {
-            body["repetition_penalty"] = repetitionPenalty
-        }
         if let seed = options.seed {
-            body["seed"] = seed
+            body["random_seed"] = seed
         }
         if !options.stopSequences.isEmpty {
             body["stop"] = options.stopSequences
         }
-
-        // OpenRouter-specific options
-        body["transforms"] = ["middle-out"]  // Enables context window optimization
 
         request.httpBody = try JSONSerialization.data(withJSONObject: body)
         return request
@@ -273,10 +223,6 @@ struct OpenRouterProvider: LLMProvider {
             dict["content"] = parts.map { partToDict($0) }
         }
 
-        if let name = message.name {
-            dict["name"] = name
-        }
-
         return dict
     }
 
@@ -292,32 +238,39 @@ struct OpenRouterProvider: LLMProvider {
         }
     }
 
+    private func contextLength(for model: String) -> Int {
+        switch model {
+        case let m where m.contains("large"):
+            return 128_000
+        case let m where m.contains("medium"):
+            return 128_000
+        case let m where m.contains("small"):
+            return 32_000
+        case let m where m.contains("codestral"):
+            return 256_000
+        case let m where m.contains("pixtral"):
+            return 128_000
+        case let m where m.contains("ministral"):
+            return 128_000
+        default:
+            return 32_000
+        }
+    }
+
     private var defaultModels: [LLMModel] {
         [
-            // OpenAI models
-            LLMModel(id: "openai/gpt-4o", name: "GPT-4o", contextLength: 128_000, supportsVision: true, supportsTools: true),
-            LLMModel(id: "openai/gpt-4o-mini", name: "GPT-4o Mini", contextLength: 128_000, supportsVision: true, supportsTools: true),
-
-            // Anthropic models
-            LLMModel(id: "anthropic/claude-3.5-sonnet", name: "Claude 3.5 Sonnet", contextLength: 200_000, supportsVision: true, supportsTools: true),
-            LLMModel(id: "anthropic/claude-3-opus", name: "Claude 3 Opus", contextLength: 200_000, supportsVision: true, supportsTools: true),
-            LLMModel(id: "anthropic/claude-3-haiku", name: "Claude 3 Haiku", contextLength: 200_000, supportsVision: true, supportsTools: true),
-
-            // Meta models
-            LLMModel(id: "meta-llama/llama-3.1-405b-instruct", name: "Llama 3.1 405B", contextLength: 131_072, supportsVision: false, supportsTools: true),
-            LLMModel(id: "meta-llama/llama-3.1-70b-instruct", name: "Llama 3.1 70B", contextLength: 131_072, supportsVision: false, supportsTools: true),
-
-            // Mistral models
-            LLMModel(id: "mistralai/mistral-large", name: "Mistral Large", contextLength: 128_000, supportsVision: false, supportsTools: true),
-            LLMModel(id: "mistralai/mixtral-8x22b-instruct", name: "Mixtral 8x22B", contextLength: 65_536, supportsVision: false, supportsTools: true),
-
-            // Google models
-            LLMModel(id: "google/gemini-pro-1.5", name: "Gemini Pro 1.5", contextLength: 1_000_000, supportsVision: true, supportsTools: true),
+            LLMModel(id: "mistral-large-latest", name: "Mistral Large", contextLength: 128_000, supportsVision: false, supportsTools: true),
+            LLMModel(id: "mistral-medium-latest", name: "Mistral Medium", contextLength: 128_000, supportsVision: false, supportsTools: true),
+            LLMModel(id: "mistral-small-latest", name: "Mistral Small", contextLength: 32_000, supportsVision: false, supportsTools: true),
+            LLMModel(id: "codestral-latest", name: "Codestral", contextLength: 256_000, supportsVision: false, supportsTools: true),
+            LLMModel(id: "pixtral-large-latest", name: "Pixtral Large", contextLength: 128_000, supportsVision: true, supportsTools: true),
+            LLMModel(id: "ministral-8b-latest", name: "Ministral 8B", contextLength: 128_000, supportsVision: false, supportsTools: true),
+            LLMModel(id: "ministral-3b-latest", name: "Ministral 3B", contextLength: 128_000, supportsVision: false, supportsTools: true),
         ]
     }
 }
 
-// MARK: - Response Types (OpenAI-compatible)
+// MARK: - Response Types
 
 private struct ChatCompletion: Decodable {
     let id: String
@@ -374,22 +327,10 @@ private struct StreamChunk: Decodable {
     }
 }
 
-private struct OpenRouterModelsResponse: Decodable {
+private struct ModelsResponse: Decodable {
     let data: [ModelInfo]
 
     struct ModelInfo: Decodable {
         let id: String
-        let name: String
-        let contextLength: Int
-        let architecture: Architecture?
-
-        enum CodingKeys: String, CodingKey {
-            case id, name, architecture
-            case contextLength = "context_length"
-        }
-
-        struct Architecture: Decodable {
-            let modality: String?
-        }
     }
 }

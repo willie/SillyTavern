@@ -26,6 +26,7 @@ final class ChatState {
     // Dependencies
     private var provider: (any LLMProvider)?
     private var promptSettings: PromptSettings = PromptSettings()
+    private var llmOptions: LLMOptions = LLMOptions()
     private var worldInfo: [WorldInfoEntry] = []
     private var extensionPrompts: ExtensionPrompts = ExtensionPrompts()
     private var tokenizer: (any Tokenizer)?
@@ -55,6 +56,7 @@ final class ChatState {
         character: CharacterCard,
         provider: (any LLMProvider)?,
         settings: PromptSettings = PromptSettings(),
+        options: LLMOptions = LLMOptions(),
         worldInfo: [WorldInfoEntry] = [],
         extensionPrompts: ExtensionPrompts = ExtensionPrompts(),
         tokenizer: (any Tokenizer)? = nil,
@@ -66,6 +68,7 @@ final class ChatState {
         self.character = character
         self.provider = provider
         self.promptSettings = settings
+        self.llmOptions = options
         self.worldInfo = worldInfo
         self.extensionPrompts = extensionPrompts
         self.tokenizer = tokenizer
@@ -166,17 +169,11 @@ final class ChatState {
 
             tokenCount = builtPrompt.tokenCount
 
-            // Options
-            let options = LLMOptions(
-                maxTokens: promptSettings.maxResponseTokens,
-                temperature: 0.7
-            )
-
             // Stream the response
             let stream = try await provider.send(
                 messages: builtPrompt.messages,
                 model: self.model,
-                options: options
+                options: llmOptions
             )
 
             // Handle continue type
@@ -268,15 +265,10 @@ final class ChatState {
                 tokenCounter: tokenCounter
             )
 
-            let options = LLMOptions(
-                maxTokens: promptSettings.maxResponseTokens,
-                temperature: 0.7
-            )
-
             let stream = try await provider.send(
                 messages: builtPrompt.messages,
                 model: self.model,
-                options: options
+                options: llmOptions
             )
 
             var newSwipeContent = ""
@@ -309,6 +301,19 @@ final class ChatState {
         guard let chatFile = chatFile else { return }
         guard chatFile.messages.indices.contains(index) else { return }
         chatFile.messages[index].mes = newContent
+    }
+
+    /// Truncate messages after index and regenerate
+    func regenerateFrom(index: Int) async {
+        guard let chatFile = chatFile else { return }
+
+        // Remove all messages after this index
+        while chatFile.messages.count > index + 1 {
+            chatFile.messages.removeLast()
+        }
+
+        // Regenerate from the last message
+        await regenerate()
     }
 
     /// Clear all messages and start fresh

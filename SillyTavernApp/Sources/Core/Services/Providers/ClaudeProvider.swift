@@ -197,6 +197,9 @@ struct ClaudeProvider: LLMProvider {
         if options.topP != 1.0 {
             body["top_p"] = options.topP
         }
+        if let topK = options.topK {
+            body["top_k"] = topK
+        }
         if !options.stopSequences.isEmpty {
             body["stop_sequences"] = options.stopSequences
         }

@@ -209,6 +209,9 @@ struct OpenAIProvider: LLMProvider {
         if options.presencePenalty != 0.0 {
             body["presence_penalty"] = options.presencePenalty
         }
+        if let seed = options.seed {
+            body["seed"] = seed
+        }
         if !options.stopSequences.isEmpty {
             body["stop"] = options.stopSequences
         }

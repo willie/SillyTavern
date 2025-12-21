@@ -141,6 +141,8 @@ struct ChatListView: View {
 struct ChatDetailView_macOS: View {
     let character: CharacterCard
     @Environment(AppState.self) private var appState
+    @State private var editingMessage: ChatMessage?
+    @State private var editText: String = ""
 
     var body: some View {
         VStack(spacing: 0) {
@@ -161,6 +163,21 @@ struct ChatDetailView_macOS: View {
         .toolbar {
             toolbarContent
         }
+        .sheet(item: $editingMessage) { message in
+            MessageEditSheet(message: message, editText: $editText) {
+                // Save changes
+                message.mes = editText
+                if let swipes = message.swipes, let swipeId = message.swipe_id, swipeId < swipes.count {
+                    message.swipes?[swipeId] = editText
+                }
+                editingMessage = nil
+            } onCancel: {
+                editingMessage = nil
+            }
+            .onAppear {
+                editText = message.displayedMessage
+            }
+        }
     }
 
     // MARK: - Messages
@@ -171,11 +188,22 @@ struct ChatDetailView_macOS: View {
                 LazyVStack(spacing: 12) {
                     ForEach(appState.chatState.messages) { message in
                         MessageBubble_macOS(
-                            content: message.displayedMessage,
-                            isUser: message.is_user,
-                            characterName: message.is_user ? nil : message.name,
-                            hasSwipes: message.hasSwipes,
-                            swipeInfo: message.hasSwipes ? "\(( message.swipe_id ?? 0) + 1)/\(message.swipeCount)" : nil
+                            message: message,
+                            onEdit: { msg in
+                                editingMessage = msg
+                            },
+                            onDelete: { msg in
+                                if let index = appState.chatState.messages.firstIndex(where: { $0.id == msg.id }) {
+                                    appState.chatState.deleteMessage(at: index)
+                                }
+                            },
+                            onRegenerate: { msg in
+                                Task {
+                                    if let index = appState.chatState.messages.firstIndex(where: { $0.id == msg.id }) {
+                                        await appState.chatState.regenerateFrom(index: index)
+                                    }
+                                }
+                            }
                         )
                         .id(message.id)
                     }
@@ -319,47 +347,125 @@ struct InspectorView: View {
 // CharacterRowView is now in Features/Characters/CharacterListView.swift
 
 struct MessageBubble_macOS: View {
-    let content: String
-    let isUser: Bool
-    let characterName: String?
-    var hasSwipes: Bool = false
-    var swipeInfo: String? = nil
+    @Bindable var message: ChatMessage
+    var onEdit: ((ChatMessage) -> Void)?
+    var onDelete: ((ChatMessage) -> Void)?
+    var onRegenerate: ((ChatMessage) -> Void)?
 
     var body: some View {
         HStack {
-            if isUser { Spacer(minLength: 100) }
+            if message.is_user { Spacer(minLength: 100) }
 
-            VStack(alignment: isUser ? .trailing : .leading, spacing: 4) {
-                // Character name
-                if let name = characterName, !isUser {
-                    HStack {
-                        Text(name)
+            VStack(alignment: message.is_user ? .trailing : .leading, spacing: 4) {
+                // Character name and swipe controls
+                if !message.is_user {
+                    HStack(spacing: 8) {
+                        Text(message.name)
                             .font(.caption)
                             .foregroundStyle(.secondary)
 
-                        // Swipe indicator
-                        if hasSwipes, let info = swipeInfo {
-                            Text(info)
-                                .font(.caption2)
-                                .padding(.horizontal, 6)
-                                .padding(.vertical, 2)
-                                .background(Color.secondary.opacity(0.2))
-                                .clipShape(Capsule())
+                        // Swipe navigation
+                        if message.hasSwipes {
+                            HStack(spacing: 4) {
+                                Button {
+                                    message.previousSwipe()
+                                } label: {
+                                    Image(systemName: "chevron.left")
+                                        .font(.caption2)
+                                }
+                                .buttonStyle(.plain)
+
+                                Text("\((message.swipe_id ?? 0) + 1)/\(message.swipeCount)")
+                                    .font(.caption2)
+                                    .monospacedDigit()
+
+                                Button {
+                                    message.nextSwipe()
+                                } label: {
+                                    Image(systemName: "chevron.right")
+                                        .font(.caption2)
+                                }
+                                .buttonStyle(.plain)
+                            }
+                            .padding(.horizontal, 6)
+                            .padding(.vertical, 2)
+                            .background(Color.secondary.opacity(0.2))
+                            .clipShape(Capsule())
                         }
                     }
                 }
 
                 // Message content
-                Text(content)
+                Text(message.displayedMessage)
                     .padding(12)
-                    .background(isUser ? Color.accentColor : Color.secondary.opacity(0.15))
-                    .foregroundStyle(isUser ? .white : .primary)
+                    .background(message.is_user ? Color.accentColor : Color.secondary.opacity(0.15))
+                    .foregroundStyle(message.is_user ? .white : .primary)
                     .clipShape(RoundedRectangle(cornerRadius: 12))
                     .textSelection(.enabled)
+                    .contextMenu {
+                        Button {
+                            onEdit?(message)
+                        } label: {
+                            Label("Edit", systemImage: "pencil")
+                        }
+
+                        Button {
+                            onRegenerate?(message)
+                        } label: {
+                            Label("Regenerate from here", systemImage: "arrow.clockwise")
+                        }
+
+                        Divider()
+
+                        Button(role: .destructive) {
+                            onDelete?(message)
+                        } label: {
+                            Label("Delete", systemImage: "trash")
+                        }
+                    }
             }
 
-            if !isUser { Spacer(minLength: 100) }
+            if !message.is_user { Spacer(minLength: 100) }
         }
+    }
+}
+
+// MARK: - Message Edit Sheet
+
+struct MessageEditSheet: View {
+    let message: ChatMessage
+    @Binding var editText: String
+    var onSave: () -> Void
+    var onCancel: () -> Void
+
+    var body: some View {
+        VStack(spacing: 16) {
+            Text("Edit Message")
+                .font(.headline)
+
+            TextEditor(text: $editText)
+                .frame(minHeight: 150)
+                .padding(8)
+                .background(Color.secondary.opacity(0.1))
+                .clipShape(RoundedRectangle(cornerRadius: 8))
+
+            HStack {
+                Button("Cancel", role: .cancel) {
+                    onCancel()
+                }
+                .keyboardShortcut(.escape)
+
+                Spacer()
+
+                Button("Save") {
+                    onSave()
+                }
+                .keyboardShortcut(.return, modifiers: .command)
+                .buttonStyle(.borderedProminent)
+            }
+        }
+        .padding()
+        .frame(width: 500, height: 300)
     }
 }
 
