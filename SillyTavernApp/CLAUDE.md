@@ -6,7 +6,7 @@ For the main SillyTavern Node.js server documentation, see [../CLAUDE.md](../CLA
 
 ## What Is This
 
-Native macOS/iOS SwiftUI port of SillyTavern. Uses the same on-disk data structures for compatibility as SillyTavern for maximum compatibility.
+Native macOS/iOS SwiftUI port of SillyTavern. Uses the same on-disk data structures for compatibility with SillyTavern.
 
 **Platforms**: macOS 26+, iOS 26+, Swift 6.2+
 
@@ -30,14 +30,16 @@ swift run              # Build and run (preferred for debugging)
   - `CharacterCard.swift` - Character card (PNG embedded JSON, V2 spec)
   - `ChatMessage.swift`, `ChatFile.swift` - Chat in JSONL format
   - `WorldInfoBook.swift`, `WorldInfoEntry.swift` - Lorebook/world info
-  - `CharacterGroup.swift` - Group chat support
+  - `Group.swift` - Group chat with activation strategies (natural, list, manual, pooled)
 - `Services/` - Business logic
   - `FileStore.swift` - File I/O for characters, world info, groups
   - `ChatStore.swift` - Chat persistence (JSONL in `chats/<character>/`)
   - `PromptBuilder.swift` - Prompt assembly matching SillyTavern's logic
+  - `LLMProvider.swift` - Provider protocol and LLMOptions/LLMMessage types
   - `TokenCounter.swift` - Token counting utilities
-- `Providers/` - LLM API integrations implementing `LLMProvider` protocol
+- `Services/Providers/` - LLM API implementations
   - `OpenAIProvider.swift`, `ClaudeProvider.swift`, `OpenRouterProvider.swift`
+  - `GeminiProvider.swift`, `MistralProvider.swift`
 
 ### Features Layer (`Sources/Features/`)
 - `Characters/` - Character list, detail, import views
@@ -65,6 +67,7 @@ final class AppState {
     var characters: CharacterStore
     var chats: ChatStore
     var chatState: ChatState
+    var settings: SettingsStore
 }
 ```
 
@@ -76,13 +79,17 @@ protocol LLMProvider: Sendable {
 }
 ```
 
+### LLM Options
+Sampling parameters: `maxTokens`, `temperature`, `topP`, `topK`, `minP`, `frequencyPenalty`, `presencePenalty`, `repetitionPenalty`, `seed`, `stopSequences`
+
 ## Key Files for Common Tasks
 
 | Task | Files |
 |------|-------|
-| Add LLM provider | `Sources/Core/Providers/`, implement `LLMProvider` protocol |
+| Add LLM provider | `Sources/Core/Services/Providers/`, implement `LLMProvider` protocol, add to `SettingsStore.createProvider()` |
 | Modify chat flow | `Sources/Features/Chat/ChatState.swift` |
 | Change prompt assembly | `Sources/Core/Services/PromptBuilder.swift` |
 | Add character field | `Sources/Core/Models/CharacterCard.swift` |
 | Modify macOS layout | `Sources/App/Platform/macOS/RootView_macOS.swift` |
 | Add settings option | `Sources/App/AppState.swift` (SettingsStore), `Sources/Features/Settings/SettingsView.swift` |
+| Group chat logic | `Sources/Core/Models/Group.swift` (GroupChatState) |
