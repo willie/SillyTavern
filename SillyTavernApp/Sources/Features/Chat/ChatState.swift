@@ -26,6 +26,9 @@ final class ChatState {
     // Save handler - called after messages change to persist to disk
     var saveHandler: (() async -> Void)?
 
+    // Generation task for cancellation support
+    private var generationTask: Task<Void, Never>?
+
     // Dependencies
     private var provider: (any LLMProvider)?
     private var promptSettings: PromptSettings = PromptSettings()
@@ -81,6 +84,16 @@ final class ChatState {
         self.personaDescription = personaDescription
     }
 
+    // MARK: - Stop Generation
+
+    /// Stop the current generation
+    func stopGeneration() {
+        generationTask?.cancel()
+        generationTask = nil
+        isGenerating = false
+        streamingText = ""
+    }
+
     // MARK: - Send Message
 
     /// Send a user message and generate a response
@@ -103,7 +116,11 @@ final class ChatState {
         // Save after adding user message
         await saveHandler?()
 
-        await generate(chatFile: chatFile, character: character, provider: provider)
+        // Run generation in a cancellable task
+        generationTask = Task {
+            await generate(chatFile: chatFile, character: character, provider: provider)
+        }
+        await generationTask?.value
     }
 
     /// Regenerate the last assistant message
@@ -116,7 +133,10 @@ final class ChatState {
             chatFile.messages.removeLast()
         }
 
-        await generate(chatFile: chatFile, character: character, provider: provider)
+        generationTask = Task {
+            await generate(chatFile: chatFile, character: character, provider: provider)
+        }
+        await generationTask?.value
     }
 
     /// Continue the last assistant message
@@ -124,7 +144,10 @@ final class ChatState {
         guard !isGenerating else { return }
         guard let chatFile = chatFile, let character = character, let provider = provider else { return }
 
-        await generate(chatFile: chatFile, character: character, provider: provider, type: .continue)
+        generationTask = Task {
+            await generate(chatFile: chatFile, character: character, provider: provider, type: .continue)
+        }
+        await generationTask?.value
     }
 
     // MARK: - Generation
@@ -194,6 +217,11 @@ final class ChatState {
             chatFile.messages.append(assistantMessage)
 
             for try await chunk in stream {
+                // Check for cancellation
+                if Task.isCancelled {
+                    // Keep the partial response
+                    break
+                }
                 streamingText += chunk
                 // Update the last message with streaming content
                 if let lastMessage = chatFile.messages.last {
@@ -203,8 +231,9 @@ final class ChatState {
 
             // Finalize
             streamingText = ""
+            generationTask = nil
 
-            // Save after generation completes
+            // Save after generation completes (even if cancelled, save partial response)
             await saveHandler?()
 
         } catch let llmError as LLMError {

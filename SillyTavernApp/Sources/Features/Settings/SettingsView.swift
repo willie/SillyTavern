@@ -35,15 +35,14 @@ struct SettingsView: View {
 
 struct APISettingsTab: View {
     @Environment(AppState.self) private var appState
-    @AppStorage("settings.provider") private var provider = "openrouter"
-    @AppStorage("settings.apiKey") private var apiKey = ""
-    @AppStorage("settings.baseURL") private var baseURL = ""
     @State private var showingModelPicker = false
 
     var body: some View {
+        @Bindable var settings = appState.settings
+
         Form {
             Section("Provider") {
-                Picker("API Provider", selection: $provider) {
+                Picker("API Provider", selection: $settings.selectedProvider) {
                     Text("OpenRouter").tag("openrouter")
                     Text("OpenAI").tag("openai")
                     Text("Claude").tag("claude")
@@ -53,25 +52,25 @@ struct APISettingsTab: View {
             }
 
             Section("Authentication") {
-                SecureField("API Key", text: $apiKey)
+                SecureField("API Key", text: $settings.apiKey)
                     .textContentType(.password)
 
-                if provider == "custom" {
-                    TextField("Base URL", text: $baseURL)
+                if settings.selectedProvider == "custom" {
+                    TextField("Base URL", text: $settings.baseURL)
                         .textContentType(.URL)
                 }
 
                 connectionStatus
             }
 
-            if provider == "openrouter" {
+            if settings.selectedProvider == "openrouter" {
                 Section("Model Selection") {
                     HStack {
                         VStack(alignment: .leading, spacing: 4) {
                             Text("Current Model")
                                 .font(.caption)
                                 .foregroundStyle(.secondary)
-                            Text(appState.settings.model.isEmpty ? "None selected" : appState.settings.model)
+                            Text(settings.model.isEmpty ? "None selected" : settings.model)
                                 .font(.body)
                         }
                         Spacer()
@@ -79,27 +78,12 @@ struct APISettingsTab: View {
                             showingModelPicker = true
                         }
                         .buttonStyle(.borderedProminent)
-                        .disabled(apiKey.isEmpty)
+                        .disabled(settings.apiKey.isEmpty)
                     }
                 }
             }
         }
         .formStyle(.grouped)
-        .onChange(of: provider) { _, newValue in
-            appState.settings.selectedProvider = newValue
-        }
-        .onChange(of: apiKey) { _, newValue in
-            appState.settings.apiKey = newValue
-        }
-        .onChange(of: baseURL) { _, newValue in
-            appState.settings.baseURL = newValue
-        }
-        .onAppear {
-            // Sync from AppState on appear
-            provider = appState.settings.selectedProvider
-            apiKey = appState.settings.apiKey
-            baseURL = appState.settings.baseURL
-        }
         .sheet(isPresented: $showingModelPicker) {
             OpenRouterModelPicker()
                 .environment(appState)
@@ -108,7 +92,7 @@ struct APISettingsTab: View {
 
     @ViewBuilder
     private var connectionStatus: some View {
-        if apiKey.isEmpty {
+        if appState.settings.apiKey.isEmpty {
             Label("Enter your API key", systemImage: "key")
                 .foregroundStyle(.secondary)
         } else {
@@ -122,14 +106,13 @@ struct APISettingsTab: View {
 
 struct ModelSettingsTab: View {
     @Environment(AppState.self) private var appState
-    @AppStorage("settings.model") private var model = "openai/gpt-4o"
-    @AppStorage("settings.maxContextTokens") private var maxContextTokens = 8192
-    @AppStorage("settings.maxResponseTokens") private var maxResponseTokens = 1024
 
     var body: some View {
+        @Bindable var settings = appState.settings
+
         Form {
             Section("Model") {
-                TextField("Model ID", text: $model)
+                TextField("Model ID", text: $settings.model)
                     .textFieldStyle(.roundedBorder)
 
                 Text("For OpenRouter, use format: provider/model-name")
@@ -138,32 +121,18 @@ struct ModelSettingsTab: View {
             }
 
             Section("Context") {
-                Stepper("Max Context: \(TokenCounter.format(maxContextTokens))",
-                        value: $maxContextTokens,
+                Stepper("Max Context: \(TokenCounter.format(settings.maxContextTokens))",
+                        value: $settings.maxContextTokens,
                         in: 1024...200000,
                         step: 1024)
 
-                Stepper("Max Response: \(TokenCounter.format(maxResponseTokens))",
-                        value: $maxResponseTokens,
+                Stepper("Max Response: \(TokenCounter.format(settings.maxResponseTokens))",
+                        value: $settings.maxResponseTokens,
                         in: 64...16384,
                         step: 64)
             }
         }
         .formStyle(.grouped)
-        .onChange(of: model) { _, newValue in
-            appState.settings.model = newValue
-        }
-        .onChange(of: maxContextTokens) { _, newValue in
-            appState.settings.maxContextTokens = newValue
-        }
-        .onChange(of: maxResponseTokens) { _, newValue in
-            appState.settings.maxResponseTokens = newValue
-        }
-        .onAppear {
-            model = appState.settings.model
-            maxContextTokens = appState.settings.maxContextTokens
-            maxResponseTokens = appState.settings.maxResponseTokens
-        }
     }
 }
 
@@ -171,34 +140,32 @@ struct ModelSettingsTab: View {
 
 struct GenerationSettingsTab: View {
     @Environment(AppState.self) private var appState
-    @AppStorage("settings.temperature") private var temperature = 0.7
-    @AppStorage("settings.topP") private var topP = 1.0
-    @AppStorage("settings.frequencyPenalty") private var frequencyPenalty = 0.0
-    @AppStorage("settings.presencePenalty") private var presencePenalty = 0.0
 
     var body: some View {
+        @Bindable var settings = appState.settings
+
         Form {
             Section("Sampling") {
                 VStack(alignment: .leading) {
                     HStack {
                         Text("Temperature")
                         Spacer()
-                        Text(String(format: "%.2f", temperature))
+                        Text(String(format: "%.2f", settings.temperature))
                             .foregroundStyle(.secondary)
                             .monospacedDigit()
                     }
-                    Slider(value: $temperature, in: 0...2, step: 0.05)
+                    Slider(value: $settings.temperature, in: 0...2, step: 0.05)
                 }
 
                 VStack(alignment: .leading) {
                     HStack {
                         Text("Top P")
                         Spacer()
-                        Text(String(format: "%.2f", topP))
+                        Text(String(format: "%.2f", settings.topP))
                             .foregroundStyle(.secondary)
                             .monospacedDigit()
                     }
-                    Slider(value: $topP, in: 0...1, step: 0.05)
+                    Slider(value: $settings.topP, in: 0...1, step: 0.05)
                 }
             }
 
@@ -207,44 +174,26 @@ struct GenerationSettingsTab: View {
                     HStack {
                         Text("Frequency Penalty")
                         Spacer()
-                        Text(String(format: "%.2f", frequencyPenalty))
+                        Text(String(format: "%.2f", settings.frequencyPenalty))
                             .foregroundStyle(.secondary)
                             .monospacedDigit()
                     }
-                    Slider(value: $frequencyPenalty, in: 0...2, step: 0.05)
+                    Slider(value: $settings.frequencyPenalty, in: 0...2, step: 0.05)
                 }
 
                 VStack(alignment: .leading) {
                     HStack {
                         Text("Presence Penalty")
                         Spacer()
-                        Text(String(format: "%.2f", presencePenalty))
+                        Text(String(format: "%.2f", settings.presencePenalty))
                             .foregroundStyle(.secondary)
                             .monospacedDigit()
                     }
-                    Slider(value: $presencePenalty, in: 0...2, step: 0.05)
+                    Slider(value: $settings.presencePenalty, in: 0...2, step: 0.05)
                 }
             }
         }
         .formStyle(.grouped)
-        .onChange(of: temperature) { _, newValue in
-            appState.settings.temperature = newValue
-        }
-        .onChange(of: topP) { _, newValue in
-            appState.settings.topP = newValue
-        }
-        .onChange(of: frequencyPenalty) { _, newValue in
-            appState.settings.frequencyPenalty = newValue
-        }
-        .onChange(of: presencePenalty) { _, newValue in
-            appState.settings.presencePenalty = newValue
-        }
-        .onAppear {
-            temperature = appState.settings.temperature
-            topP = appState.settings.topP
-            frequencyPenalty = appState.settings.frequencyPenalty
-            presencePenalty = appState.settings.presencePenalty
-        }
     }
 }
 
@@ -252,40 +201,29 @@ struct GenerationSettingsTab: View {
 
 struct PersonaSettingsTab: View {
     @Environment(AppState.self) private var appState
-    @AppStorage("settings.personaName") private var personaName = "User"
-    @AppStorage("settings.personaDescription") private var personaDescription = ""
-    @AppStorage("settings.hideNSFWImages") private var hideNSFWImages = true
 
     var body: some View {
+        @Bindable var settings = appState.settings
+
         Form {
             Section("Your Persona") {
-                TextField("Name", text: $personaName)
+                TextField("Name", text: $settings.personaName)
 
                 VStack(alignment: .leading, spacing: 8) {
                     Text("Description")
                         .font(.caption)
                         .foregroundStyle(.secondary)
-                    TextEditor(text: $personaDescription)
+                    TextEditor(text: $settings.personaDescription)
                         .frame(minHeight: 100)
                         .font(.body)
                 }
             }
 
             Section("Content") {
-                Toggle("Hide NSFW Character Images", isOn: $hideNSFWImages)
+                Toggle("Hide NSFW Character Images", isOn: $settings.hideNSFWImages)
             }
         }
         .formStyle(.grouped)
-        .onChange(of: personaName) { _, newValue in
-            appState.settings.personaName = newValue
-        }
-        .onChange(of: personaDescription) { _, newValue in
-            appState.settings.personaDescription = newValue
-        }
-        .onAppear {
-            personaName = appState.settings.personaName
-            personaDescription = appState.settings.personaDescription
-        }
     }
 }
 
@@ -293,15 +231,13 @@ struct PersonaSettingsTab: View {
 
 struct PromptsSettingsTab: View {
     @Environment(AppState.self) private var appState
-    @AppStorage("settings.mainPrompt") private var mainPrompt = "Write {{char}}'s next reply in a fictional chat between {{char}} and {{user}}."
-    @AppStorage("settings.jailbreakPrompt") private var jailbreakPrompt = ""
-    @AppStorage("settings.authorsNote") private var authorsNote = ""
-    @AppStorage("settings.authorsNoteDepth") private var authorsNoteDepth = 4
 
     var body: some View {
+        @Bindable var settings = appState.settings
+
         Form {
             Section("System Prompt") {
-                TextEditor(text: $mainPrompt)
+                TextEditor(text: $settings.mainPrompt)
                     .frame(minHeight: 100)
                     .font(.body.monospaced())
 
@@ -311,40 +247,22 @@ struct PromptsSettingsTab: View {
             }
 
             Section("Jailbreak Prompt") {
-                TextEditor(text: $jailbreakPrompt)
+                TextEditor(text: $settings.jailbreakPrompt)
                     .frame(minHeight: 80)
                     .font(.body.monospaced())
             }
 
             Section("Author's Note") {
-                TextEditor(text: $authorsNote)
+                TextEditor(text: $settings.authorsNote)
                     .frame(minHeight: 80)
                     .font(.body.monospaced())
 
-                Stepper("Injection Depth: \(authorsNoteDepth)",
-                        value: $authorsNoteDepth,
+                Stepper("Injection Depth: \(settings.authorsNoteDepth)",
+                        value: $settings.authorsNoteDepth,
                         in: 0...20)
             }
         }
         .formStyle(.grouped)
-        .onChange(of: mainPrompt) { _, newValue in
-            appState.settings.mainPrompt = newValue
-        }
-        .onChange(of: jailbreakPrompt) { _, newValue in
-            appState.settings.jailbreakPrompt = newValue
-        }
-        .onChange(of: authorsNote) { _, newValue in
-            appState.settings.authorsNote = newValue
-        }
-        .onChange(of: authorsNoteDepth) { _, newValue in
-            appState.settings.authorsNoteDepth = newValue
-        }
-        .onAppear {
-            mainPrompt = appState.settings.mainPrompt
-            jailbreakPrompt = appState.settings.jailbreakPrompt
-            authorsNote = appState.settings.authorsNote
-            authorsNoteDepth = appState.settings.authorsNoteDepth
-        }
     }
 }
 

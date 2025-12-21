@@ -143,6 +143,10 @@ struct ChatDetailView_macOS: View {
     @Environment(AppState.self) private var appState
     @State private var editingMessage: ChatMessage?
     @State private var editText: String = ""
+    @State private var isAtBottom: Bool = true
+
+    /// Threshold for detecting "at bottom" scroll position
+    private let scrollBottomThreshold: CGFloat = 50
 
     var body: some View {
         VStack(spacing: 0) {
@@ -165,16 +169,17 @@ struct ChatDetailView_macOS: View {
         }
         .sheet(item: $editingMessage) { message in
             MessageEditSheet(message: message, editText: $editText) {
-                // Save changes
-                message.mes = editText
-                if let swipes = message.swipes, let swipeId = message.swipe_id, swipeId < swipes.count {
-                    message.swipes?[swipeId] = editText
+                // Save changes via ChatState for proper persistence
+                if let index = appState.chatState.messages.firstIndex(where: { $0.id == message.id }) {
+                    // Update the current swipe if swipes exist, otherwise update mes
+                    if let swipes = message.swipes, let swipeId = message.swipe_id, swipeId < swipes.count {
+                        message.swipes?[swipeId] = editText
+                    }
+                    Task {
+                        await appState.chatState.editMessage(at: index, newContent: editText)
+                    }
                 }
                 editingMessage = nil
-                // Persist to disk
-                Task {
-                    await appState.saveActiveChat()
-                }
             } onCancel: {
                 editingMessage = nil
             }
@@ -216,11 +221,25 @@ struct ChatDetailView_macOS: View {
                 }
                 .padding()
             }
+            .onScrollGeometryChange(for: Bool.self) { geometry in
+                // Check if scrolled to bottom (within threshold)
+                let atBottom = geometry.contentOffset.y + geometry.containerSize.height >= geometry.contentSize.height - scrollBottomThreshold
+                return atBottom
+            } action: { _, newValue in
+                isAtBottom = newValue
+            }
             .onChange(of: appState.chatState.messages.count) {
-                if let lastMessage = appState.chatState.messages.last {
+                // Only auto-scroll if user was already at bottom
+                if isAtBottom, let lastMessage = appState.chatState.messages.last {
                     withAnimation {
                         proxy.scrollTo(lastMessage.id, anchor: .bottom)
                     }
+                }
+            }
+            .onChange(of: appState.chatState.streamingText) {
+                // Also scroll during streaming if at bottom
+                if isAtBottom, let lastMessage = appState.chatState.messages.last {
+                    proxy.scrollTo(lastMessage.id, anchor: .bottom)
                 }
             }
         }
@@ -277,6 +296,7 @@ struct ChatDetailView_macOS: View {
             .buttonStyle(.plain)
             .disabled(appState.chatState.inputText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || appState.chatState.isGenerating)
             .keyboardShortcut(.return, modifiers: .command)
+            .accessibilityLabel(appState.chatState.isGenerating ? "Generating response" : "Send message")
         }
         .padding()
     }
@@ -380,10 +400,12 @@ struct MessageBubble_macOS: View {
                                         .font(.caption2)
                                 }
                                 .buttonStyle(.plain)
+                                .accessibilityLabel("Previous response")
 
                                 Text("\((message.swipe_id ?? 0) + 1)/\(message.swipeCount)")
                                     .font(.caption2)
                                     .monospacedDigit()
+                                    .accessibilityLabel("Response \((message.swipe_id ?? 0) + 1) of \(message.swipeCount)")
 
                                 Button {
                                     message.nextSwipe()
@@ -392,6 +414,7 @@ struct MessageBubble_macOS: View {
                                         .font(.caption2)
                                 }
                                 .buttonStyle(.plain)
+                                .accessibilityLabel("Next response")
                             }
                             .padding(.horizontal, 6)
                             .padding(.vertical, 2)

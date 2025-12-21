@@ -185,12 +185,21 @@ final class ChatFile: Identifiable, Hashable {
 
     // MARK: - Hashable & Equatable
 
+    /// Two ChatFiles are equal if they represent the same file on disk (by fileURL),
+    /// or if both are unsaved and have the same UUID.
     static func == (lhs: ChatFile, rhs: ChatFile) -> Bool {
-        lhs.id == rhs.id
+        if let lhsURL = lhs.fileURL, let rhsURL = rhs.fileURL {
+            return lhsURL == rhsURL
+        }
+        return lhs.id == rhs.id
     }
 
     func hash(into hasher: inout Hasher) {
-        hasher.combine(id)
+        if let url = fileURL {
+            hasher.combine(url)
+        } else {
+            hasher.combine(id)
+        }
     }
 
     // MARK: - Helpers

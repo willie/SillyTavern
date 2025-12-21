@@ -360,6 +360,10 @@ struct GroupDetailView: View {
 
     private func moveMembers(from source: IndexSet, to destination: Int) {
         group.members.move(fromOffsets: source, toOffset: destination)
+        // Persist the move
+        Task {
+            await appState.groups.save(group)
+        }
     }
 
     private func saveGroup() {

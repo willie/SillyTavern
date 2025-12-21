@@ -87,8 +87,20 @@ final class AppState {
 
     // MARK: - Chat Actions
 
+    /// Close the current chat and clear context
+    func closeChat() {
+        chatState.saveHandler = nil
+        chatState.stopGeneration()
+        activeCharacter = nil
+        activeChatFile = nil
+        chats.activeChat = nil
+    }
+
     /// Start a new chat with a character
     func newChat(with character: CharacterCard) {
+        // Clear previous chat context
+        closeChat()
+
         self.activeCharacter = character
 
         Task {
@@ -132,6 +144,9 @@ final class AppState {
 
     /// Open an existing chat
     func openChat(_ chatFile: ChatFile, for character: CharacterCard) {
+        // Clear previous chat context
+        closeChat()
+
         self.activeCharacter = character
         self.activeChatFile = chatFile
         chats.activeChat = chatFile
@@ -270,20 +285,24 @@ final class CharacterStore {
 
     func add(_ character: CharacterCard) {
         Task {
-            try? fileStore.saveCharacter(character)
+            let data = try character.toData(prettyPrinted: true)
+            let savedURL = try fileStore.saveCharacter(data: data, name: character.name, existingURL: character.fileURL)
+            character.fileURL = savedURL
             // FolderMonitor will trigger load() to refresh characters
         }
     }
 
     func remove(_ character: CharacterCard) {
         Task {
-            try? fileStore.deleteCharacter(character)
+            guard let url = character.fileURL else { return }
+            try? fileStore.deleteCharacter(at: url)
             // FolderMonitor will trigger load() to refresh characters
         }
     }
 
     func importCharacter(from url: URL) async throws -> CharacterCard {
-        let character = try await fileStore.importCharacter(from: url)
+        let (character, savedURL) = try await fileStore.importCharacter(from: url)
+        character.fileURL = savedURL
         // FolderMonitor will trigger load() to refresh characters
         return character
     }
@@ -370,6 +389,11 @@ final class SettingsStore {
         didSet { defaults.set(personaDescription, forKey: "settings.personaDescription") }
     }
 
+    // Content Settings
+    var hideNSFWImages: Bool = true {
+        didSet { defaults.set(hideNSFWImages, forKey: "settings.hideNSFWImages") }
+    }
+
     private let fileStore = FileStore()
 
     func load() async {
@@ -436,6 +460,9 @@ final class SettingsStore {
         }
         if let desc = defaults.string(forKey: "settings.personaDescription") {
             personaDescription = desc
+        }
+        if defaults.object(forKey: "settings.hideNSFWImages") != nil {
+            hideNSFWImages = defaults.bool(forKey: "settings.hideNSFWImages")
         }
     }
 
@@ -586,7 +613,19 @@ final class WorldInfoStore {
     /// Save a book to disk
     func save(_ book: WorldInfoBook) async {
         do {
-            try await fileStore.saveWorldInfoBook(book)
+            // Encode book data
+            let jsonValue = book.toJSON()
+            let encoder = JSONEncoder()
+            encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
+            guard case .object(let dict) = jsonValue else {
+                print("Failed to encode world info book: invalid JSON")
+                return
+            }
+            let data = try encoder.encode(dict)
+
+            // Save to disk
+            let savedURL = try fileStore.saveWorldInfoBook(data: data, name: book.name, existingURL: book.fileURL)
+            book.fileURL = savedURL
             // FolderMonitor will trigger load() to refresh books
         } catch {
             print("Failed to save world info book: \(error)")
@@ -596,7 +635,8 @@ final class WorldInfoStore {
     /// Delete a book from disk
     private func delete(_ book: WorldInfoBook) async {
         do {
-            try await fileStore.deleteWorldInfoBook(book)
+            guard let url = book.fileURL else { return }
+            try fileStore.deleteWorldInfoBook(at: url)
             // FolderMonitor will trigger load() to refresh books
         } catch {
             print("Failed to delete world info book: \(error)")
@@ -605,7 +645,8 @@ final class WorldInfoStore {
 
     /// Import a book from URL
     func importBook(from url: URL) async throws -> WorldInfoBook {
-        let book = try await fileStore.importWorldInfoBook(from: url)
+        let (book, savedURL) = try await fileStore.importWorldInfoBook(from: url)
+        book.fileURL = savedURL
         // FolderMonitor will trigger load() to refresh books
         return book
     }
@@ -666,7 +707,9 @@ final class GroupStore {
     /// Save a group to disk
     func save(_ group: CharacterGroup) async {
         do {
-            try await fileStore.saveGroup(group)
+            let data = try group.toData(prettyPrinted: true)
+            let savedURL = try fileStore.saveGroup(data: data, name: group.name, existingURL: group.fileURL)
+            group.fileURL = savedURL
             // FolderMonitor will trigger load() to refresh groups
         } catch {
             print("Failed to save group: \(error)")
@@ -676,7 +719,8 @@ final class GroupStore {
     /// Delete a group from disk
     private func delete(_ group: CharacterGroup) async {
         do {
-            try await fileStore.deleteGroup(group)
+            guard let url = group.fileURL else { return }
+            try fileStore.deleteGroup(at: url)
             // FolderMonitor will trigger load() to refresh groups
         } catch {
             print("Failed to delete group: \(error)")

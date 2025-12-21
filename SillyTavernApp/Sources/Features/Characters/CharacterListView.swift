@@ -210,8 +210,10 @@ struct CharacterListView: View {
 
 struct CharacterRowView: View {
     let character: CharacterCard
-    @AppStorage("settings.hideNSFWImages") private var hideNSFWImages = true
+    @Environment(AppState.self) private var appState
     @State private var avatarImage: Image?
+
+    private var hideNSFWImages: Bool { appState.settings.hideNSFWImages }
 
     var body: some View {
         HStack(spacing: 12) {

@@ -4,21 +4,23 @@ import Foundation
 
 /// Handles file operations for characters, chats, and world info.
 /// Supports PNG metadata extraction for character cards.
-@MainActor
-final class FileStore {
-    private let fileManager = FileManager.default
+///
+/// Note: FileStore methods are nonisolated to run I/O off the main thread.
+/// Callers are responsible for updating @Observable objects with returned values.
+final class FileStore: Sendable {
 
     // MARK: - Directory Paths
 
     /// Base directory for app data
     var baseDirectory: URL {
+        let fm = FileManager.default
         // Use App Group container for potential sharing
-        if let container = fileManager.containerURL(forSecurityApplicationGroupIdentifier: "group.sillytavern") {
+        if let container = fm.containerURL(forSecurityApplicationGroupIdentifier: "group.sillytavern") {
             return container
         }
 
         // Fallback to documents directory
-        return fileManager.urls(for: .documentDirectory, in: .userDomainMask)[0]
+        return fm.urls(for: .documentDirectory, in: .userDomainMask)[0]
             .appendingPathComponent("SillyTavern")
     }
 
@@ -35,17 +37,19 @@ final class FileStore {
     }
 
     private func ensureDirectoriesExist() {
+        let fm = FileManager.default
         let directories = [charactersDirectory, chatsDirectory, worldInfoDirectory, groupsDirectory]
         for dir in directories {
-            try? fileManager.createDirectory(at: dir, withIntermediateDirectories: true)
+            try? fm.createDirectory(at: dir, withIntermediateDirectories: true)
         }
     }
 
     // MARK: - Character Operations
 
     /// Load all characters from disk
-    func loadCharacters() async throws -> [CharacterCard] {
-        let files = try fileManager.contentsOfDirectory(at: charactersDirectory, includingPropertiesForKeys: nil)
+    nonisolated func loadCharacters() async throws -> [CharacterCard] {
+        let fm = FileManager.default
+        let files = try fm.contentsOfDirectory(at: charactersDirectory, includingPropertiesForKeys: nil)
         var characters: [CharacterCard] = []
 
         for file in files {
@@ -58,7 +62,7 @@ final class FileStore {
     }
 
     /// Load a character from a file (PNG or JSON)
-    func loadCharacter(from url: URL) async throws -> CharacterCard {
+    nonisolated func loadCharacter(from url: URL) async throws -> CharacterCard {
         let ext = url.pathExtension.lowercased()
 
         switch ext {
@@ -72,7 +76,7 @@ final class FileStore {
     }
 
     /// Load character from PNG with embedded metadata
-    private func loadCharacterFromPNG(_ url: URL) async throws -> CharacterCard {
+    nonisolated private func loadCharacterFromPNG(_ url: URL) async throws -> CharacterCard {
         let data = try Data(contentsOf: url)
         let jsonString = try PNGMetadataReader.extractCharacterData(from: data)
 
@@ -86,21 +90,28 @@ final class FileStore {
     }
 
     /// Load character from JSON file
-    private func loadCharacterFromJSON(_ url: URL) throws -> CharacterCard {
+    nonisolated private func loadCharacterFromJSON(_ url: URL) throws -> CharacterCard {
         let data = try Data(contentsOf: url)
         let json = try JSONDecoder().decode([String: JSONValue].self, from: data)
         return CharacterCard(from: json, url: url)
     }
 
-    /// Save a character to disk
-    func saveCharacter(_ character: CharacterCard) throws {
-        let url = character.fileURL ?? charactersDirectory.appendingPathComponent("\(character.name).json")
-        let data = try character.toData(prettyPrinted: true)
+    /// Save character data to disk
+    /// - Parameters:
+    ///   - data: The encoded character data
+    ///   - name: Character name for filename
+    ///   - existingURL: Existing file URL if updating
+    /// - Returns: The URL where the file was saved
+    nonisolated func saveCharacter(data: Data, name: String, existingURL: URL?) throws -> URL {
+        let url = existingURL ?? charactersDirectory.appendingPathComponent("\(name).json")
         try data.write(to: url)
+        return url
     }
 
     /// Import a character from an external URL (file picker, share sheet, etc.)
-    func importCharacter(from url: URL) async throws -> CharacterCard {
+    /// - Returns: Tuple of (character, destination URL)
+    nonisolated func importCharacter(from url: URL) async throws -> (CharacterCard, URL) {
+        let fm = FileManager.default
         let character = try await loadCharacter(from: url)
 
         // Copy to our characters directory
@@ -111,27 +122,26 @@ final class FileStore {
         // Ensure unique filename
         let uniqueDestination = ensureUniqueFilename(destination)
 
-        try fileManager.copyItem(at: url, to: uniqueDestination)
+        try fm.copyItem(at: url, to: uniqueDestination)
 
-        // Update character's file URL
-        character.fileURL = uniqueDestination
-        return character
+        return (character, uniqueDestination)
     }
 
-    /// Delete a character
-    func deleteCharacter(_ character: CharacterCard) throws {
-        guard let url = character.fileURL else { return }
-        try fileManager.removeItem(at: url)
+    /// Delete a character file
+    nonisolated func deleteCharacter(at url: URL) throws {
+        let fm = FileManager.default
+        try fm.removeItem(at: url)
     }
 
     // MARK: - World Info Operations
 
     /// Load all world info books
-    func loadWorldInfoBooks() async throws -> [WorldInfoBook] {
+    nonisolated func loadWorldInfoBooks() async throws -> [WorldInfoBook] {
+        let fm = FileManager.default
         // Create directory if it doesn't exist
-        try? fileManager.createDirectory(at: worldInfoDirectory, withIntermediateDirectories: true)
+        try? fm.createDirectory(at: worldInfoDirectory, withIntermediateDirectories: true)
 
-        let files = try fileManager.contentsOfDirectory(at: worldInfoDirectory, includingPropertiesForKeys: nil)
+        let files = try fm.contentsOfDirectory(at: worldInfoDirectory, includingPropertiesForKeys: nil)
         var books: [WorldInfoBook] = []
 
         for file in files where file.pathExtension.lowercased() == "json" {
@@ -144,7 +154,7 @@ final class FileStore {
     }
 
     /// Load a world info book from JSON
-    private func loadWorldInfoBook(from url: URL) throws -> WorldInfoBook {
+    nonisolated private func loadWorldInfoBook(from url: URL) throws -> WorldInfoBook {
         let data = try Data(contentsOf: url)
         let json = try JSONDecoder().decode([String: JSONValue].self, from: data)
         let book = WorldInfoBook(from: json)
@@ -152,32 +162,29 @@ final class FileStore {
         return book
     }
 
-    /// Save a world info book to disk
-    func saveWorldInfoBook(_ book: WorldInfoBook) async throws {
-        let filename = sanitizeFilename(book.name.isEmpty ? "Untitled" : book.name) + ".json"
-        let url = book.fileURL ?? worldInfoDirectory.appendingPathComponent(filename)
-
-        let jsonValue = book.toJSON()
-        let encoder = JSONEncoder()
-        encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
-
-        guard case .object(let dict) = jsonValue else {
-            throw FileStoreError.invalidData
-        }
-
-        let data = try encoder.encode(dict)
+    /// Save world info book data to disk
+    /// - Parameters:
+    ///   - data: The encoded book data
+    ///   - name: Book name for filename
+    ///   - existingURL: Existing file URL if updating
+    /// - Returns: The URL where the file was saved
+    nonisolated func saveWorldInfoBook(data: Data, name: String, existingURL: URL?) throws -> URL {
+        let filename = sanitizeFilename(name.isEmpty ? "Untitled" : name) + ".json"
+        let url = existingURL ?? worldInfoDirectory.appendingPathComponent(filename)
         try data.write(to: url)
-        book.fileURL = url
+        return url
     }
 
-    /// Delete a world info book from disk
-    func deleteWorldInfoBook(_ book: WorldInfoBook) async throws {
-        guard let url = book.fileURL else { return }
-        try fileManager.removeItem(at: url)
+    /// Delete a world info book file
+    nonisolated func deleteWorldInfoBook(at url: URL) throws {
+        let fm = FileManager.default
+        try fm.removeItem(at: url)
     }
 
     /// Import a world info book from an external URL
-    func importWorldInfoBook(from url: URL) async throws -> WorldInfoBook {
+    /// - Returns: Tuple of (book, destination URL)
+    nonisolated func importWorldInfoBook(from url: URL) async throws -> (WorldInfoBook, URL) {
+        let fm = FileManager.default
         let book = try loadWorldInfoBook(from: url)
 
         // Copy to our worlds directory
@@ -185,20 +192,20 @@ final class FileStore {
         let destination = worldInfoDirectory.appendingPathComponent("\(filename).json")
         let uniqueDestination = ensureUniqueFilename(destination)
 
-        try fileManager.copyItem(at: url, to: uniqueDestination)
-        book.fileURL = uniqueDestination
+        try fm.copyItem(at: url, to: uniqueDestination)
 
-        return book
+        return (book, uniqueDestination)
     }
 
     // MARK: - Group Operations
 
     /// Load all groups from disk
-    func loadGroups() async throws -> [CharacterGroup] {
+    nonisolated func loadGroups() async throws -> [CharacterGroup] {
+        let fm = FileManager.default
         // Create directory if it doesn't exist
-        try? fileManager.createDirectory(at: groupsDirectory, withIntermediateDirectories: true)
+        try? fm.createDirectory(at: groupsDirectory, withIntermediateDirectories: true)
 
-        let files = try fileManager.contentsOfDirectory(at: groupsDirectory, includingPropertiesForKeys: nil)
+        let files = try fm.contentsOfDirectory(at: groupsDirectory, includingPropertiesForKeys: nil)
         var groups: [CharacterGroup] = []
 
         for file in files where file.pathExtension.lowercased() == "json" {
@@ -211,37 +218,41 @@ final class FileStore {
     }
 
     /// Load a group from JSON file
-    private func loadGroup(from url: URL) throws -> CharacterGroup {
+    nonisolated private func loadGroup(from url: URL) throws -> CharacterGroup {
         let data = try Data(contentsOf: url)
         let json = try JSONDecoder().decode([String: JSONValue].self, from: data)
         return CharacterGroup(fromJSON: json, url: url)
     }
 
-    /// Save a group to disk
-    func saveGroup(_ group: CharacterGroup) async throws {
-        let filename = sanitizeFilename(group.name.isEmpty ? "Untitled" : group.name) + ".json"
-        let url = group.fileURL ?? groupsDirectory.appendingPathComponent(filename)
-
-        let data = try group.toData(prettyPrinted: true)
+    /// Save group data to disk
+    /// - Parameters:
+    ///   - data: The encoded group data
+    ///   - name: Group name for filename
+    ///   - existingURL: Existing file URL if updating
+    /// - Returns: The URL where the file was saved
+    nonisolated func saveGroup(data: Data, name: String, existingURL: URL?) throws -> URL {
+        let filename = sanitizeFilename(name.isEmpty ? "Untitled" : name) + ".json"
+        let url = existingURL ?? groupsDirectory.appendingPathComponent(filename)
         try data.write(to: url)
-        group.fileURL = url
+        return url
     }
 
-    /// Delete a group from disk
-    func deleteGroup(_ group: CharacterGroup) async throws {
-        guard let url = group.fileURL else { return }
-        try fileManager.removeItem(at: url)
+    /// Delete a group file
+    nonisolated func deleteGroup(at url: URL) throws {
+        let fm = FileManager.default
+        try fm.removeItem(at: url)
     }
 
     // MARK: - Helpers
 
-    private func sanitizeFilename(_ name: String) -> String {
+    nonisolated private func sanitizeFilename(_ name: String) -> String {
         let invalidChars = CharacterSet(charactersIn: "/\\:*?\"<>|")
         return name.components(separatedBy: invalidChars).joined(separator: "_")
     }
 
-    private func ensureUniqueFilename(_ url: URL) -> URL {
-        guard fileManager.fileExists(atPath: url.path) else { return url }
+    nonisolated private func ensureUniqueFilename(_ url: URL) -> URL {
+        let fm = FileManager.default
+        guard fm.fileExists(atPath: url.path) else { return url }
 
         let directory = url.deletingLastPathComponent()
         let name = url.deletingPathExtension().lastPathComponent
@@ -249,7 +260,7 @@ final class FileStore {
 
         var counter = 1
         var newURL = url
-        while fileManager.fileExists(atPath: newURL.path) {
+        while fm.fileExists(atPath: newURL.path) {
             counter += 1
             newURL = directory.appendingPathComponent("\(name)_\(counter).\(ext)")
         }

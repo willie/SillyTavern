@@ -408,12 +408,51 @@ struct WorldInfoBookDetailView: View {
     }
 
     private func moveEntries(from source: IndexSet, to destination: Int) {
-        var sorted = filteredEntries
-        sorted.move(fromOffsets: source, toOffset: destination)
+        // Map filtered indices to actual book.entries indices
+        let sortedEntries = book.entries.sorted { $0.order < $1.order }
 
-        // Update order values
-        for (index, entry) in sorted.enumerated() {
-            entry.order = index * 10
+        // Get the entries being moved from filtered view
+        let movedEntries = source.map { filteredEntries[$0] }
+
+        // Create new order based on the move operation
+        var reorderedIDs = sortedEntries.map { $0.id }
+
+        // Remove moved entries from their current positions
+        for entry in movedEntries {
+            reorderedIDs.removeAll { $0 == entry.id }
+        }
+
+        // Calculate insert position in the full list
+        // The destination is in the filtered list, so we need to find the right spot
+        let destinationInFull: Int
+        if destination >= filteredEntries.count {
+            destinationInFull = reorderedIDs.count
+        } else if destination == 0 {
+            destinationInFull = 0
+        } else {
+            let entryBeforeDestination = filteredEntries[destination - 1]
+            if let idx = reorderedIDs.firstIndex(of: entryBeforeDestination.id) {
+                destinationInFull = idx + 1
+            } else {
+                destinationInFull = reorderedIDs.count
+            }
+        }
+
+        // Insert moved entries at the destination
+        for entry in movedEntries.reversed() {
+            reorderedIDs.insert(entry.id, at: destinationInFull)
+        }
+
+        // Update order values based on new positions
+        for (index, entryID) in reorderedIDs.enumerated() {
+            if let entry = book.entries.first(where: { $0.id == entryID }) {
+                entry.order = index * 10
+            }
+        }
+
+        // Save the book
+        Task {
+            await appState.worldInfo.save(book)
         }
     }
 

@@ -6,9 +6,10 @@ struct CharacterDetailView: View {
     @Bindable var character: CharacterCard
     @Environment(AppState.self) private var appState
     @Environment(\.dismiss) private var dismiss
-    @AppStorage("settings.hideNSFWImages") private var hideNSFWImages = true
     @State private var isEditing = false
     @State private var avatarImage: Image?
+
+    private var hideNSFWImages: Bool { appState.settings.hideNSFWImages }
 
     var body: some View {
         ScrollView {
@@ -383,10 +384,8 @@ struct CharacterDetailView: View {
             Button {
                 isEditing.toggle()
                 if !isEditing {
-                    // Save changes
-                    Task {
-                        try? FileStore().saveCharacter(character)
-                    }
+                    // Save changes via the store
+                    appState.characters.add(character)
                 }
             } label: {
                 Text(isEditing ? "Done" : "Edit")
