@@ -193,16 +193,17 @@ final class ChatStore {
             character_name: character.name
         )
 
-        // Select greeting (first_mes or random from alternate_greetings)
+        // Select greeting (first_mes or random from non-empty alternate_greetings)
+        let validAlternates = character.alternate_greetings.filter { !$0.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
         let greeting: String
-        if !character.alternate_greetings.isEmpty && Bool.random() {
-            greeting = character.alternate_greetings.randomElement() ?? character.first_mes
+        if !validAlternates.isEmpty && Bool.random() {
+            greeting = validAlternates.randomElement() ?? character.first_mes
         } else {
             greeting = character.first_mes
         }
 
         // Add first message if character has one
-        if !greeting.isEmpty {
+        if !greeting.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
             let firstMessage = substituteParams(greeting, character: character, userName: userName)
             chat.addCharacterMessage(firstMessage)
         }

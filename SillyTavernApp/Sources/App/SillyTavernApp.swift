@@ -123,7 +123,9 @@ struct AppCommands: Commands {
             Divider()
 
             Button("Clear Chat") {
-                appState.chatState.clearChat()
+                Task {
+                    await appState.chatState.clearChat()
+                }
             }
             .disabled(appState.chatState.messages.isEmpty)
         }

@@ -23,6 +23,9 @@ final class ChatState {
     var tokenCount: Int = 0
     var maxContextTokens: Int = 8192
 
+    // Save handler - called after messages change to persist to disk
+    var saveHandler: (() async -> Void)?
+
     // Dependencies
     private var provider: (any LLMProvider)?
     private var promptSettings: PromptSettings = PromptSettings()
@@ -96,6 +99,9 @@ final class ChatState {
         // Add user message
         chatFile.addUserMessage(inputText)
         inputText = ""
+
+        // Save after adding user message
+        await saveHandler?()
 
         await generate(chatFile: chatFile, character: character, provider: provider)
     }
@@ -198,17 +204,24 @@ final class ChatState {
             // Finalize
             streamingText = ""
 
+            // Save after generation completes
+            await saveHandler?()
+
         } catch let llmError as LLMError {
             error = .providerError(llmError)
             // Remove the placeholder message on error
             if let last = chatFile.messages.last, last.mes.isEmpty || last.mes == streamingText {
                 chatFile.messages.removeLast()
             }
+            // Save after cleanup
+            await saveHandler?()
         } catch {
             self.error = .unknown(error)
             if let last = chatFile.messages.last, last.mes.isEmpty {
                 chatFile.messages.removeLast()
             }
+            // Save after cleanup
+            await saveHandler?()
         }
 
         isGenerating = false
@@ -281,6 +294,9 @@ final class ChatState {
             lastMessage.addSwipe(newSwipeContent)
             streamingText = ""
 
+            // Save after swipe completes
+            await saveHandler?()
+
         } catch {
             self.error = .unknown(error)
         }
@@ -291,16 +307,18 @@ final class ChatState {
     // MARK: - Message Actions
 
     /// Delete a message at index
-    func deleteMessage(at index: Int) {
+    func deleteMessage(at index: Int) async {
         guard let chatFile = chatFile else { return }
         chatFile.deleteMessage(at: index)
+        await saveHandler?()
     }
 
     /// Edit a message
-    func editMessage(at index: Int, newContent: String) {
+    func editMessage(at index: Int, newContent: String) async {
         guard let chatFile = chatFile else { return }
         guard chatFile.messages.indices.contains(index) else { return }
         chatFile.messages[index].mes = newContent
+        await saveHandler?()
     }
 
     /// Truncate messages after index and regenerate
@@ -312,12 +330,15 @@ final class ChatState {
             chatFile.messages.removeLast()
         }
 
+        // Save the truncation
+        await saveHandler?()
+
         // Regenerate from the last message
         await regenerate()
     }
 
     /// Clear all messages and start fresh
-    func clearChat() {
+    func clearChat() async {
         guard let chatFile = chatFile, let character = character else { return }
 
         chatFile.clearMessages()
@@ -327,6 +348,8 @@ final class ChatState {
             let firstMessage = substituteParams(character.first_mes)
             chatFile.addCharacterMessage(firstMessage)
         }
+
+        await saveHandler?()
     }
 
     // MARK: - Helpers

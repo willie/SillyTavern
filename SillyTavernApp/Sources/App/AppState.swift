@@ -116,6 +116,12 @@ final class AppState {
                     personaDescription: settings.personaDescription
                 )
 
+                // Set up save handler to persist chat changes to disk
+                chatState.saveHandler = { [weak self] in
+                    guard let self = self else { return }
+                    await self.saveActiveChat()
+                }
+
                 // Navigate to chat
                 self.navigationPath.append(ChatRoute(character: character))
             } catch {
@@ -145,13 +151,19 @@ final class AppState {
             personaDescription: settings.personaDescription
         )
 
+        // Set up save handler to persist chat changes to disk
+        chatState.saveHandler = { [weak self] in
+            guard let self = self else { return }
+            await self.saveActiveChat()
+        }
+
         // Navigate to chat
         self.navigationPath.append(ChatRoute(character: character))
     }
 
     /// Save the active chat
     func saveActiveChat() async {
-        guard let chatFile = activeChatFile, let character = activeCharacter else { return }
+        guard activeChatFile != nil, let character = activeCharacter else { return }
         await chats.saveActiveChat(for: character)
     }
 }

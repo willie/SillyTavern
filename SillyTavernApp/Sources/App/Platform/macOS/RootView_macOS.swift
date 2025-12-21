@@ -171,6 +171,10 @@ struct ChatDetailView_macOS: View {
                     message.swipes?[swipeId] = editText
                 }
                 editingMessage = nil
+                // Persist to disk
+                Task {
+                    await appState.saveActiveChat()
+                }
             } onCancel: {
                 editingMessage = nil
             }
@@ -193,8 +197,10 @@ struct ChatDetailView_macOS: View {
                                 editingMessage = msg
                             },
                             onDelete: { msg in
-                                if let index = appState.chatState.messages.firstIndex(where: { $0.id == msg.id }) {
-                                    appState.chatState.deleteMessage(at: index)
+                                Task {
+                                    if let index = appState.chatState.messages.firstIndex(where: { $0.id == msg.id }) {
+                                        await appState.chatState.deleteMessage(at: index)
+                                    }
                                 }
                             },
                             onRegenerate: { msg in

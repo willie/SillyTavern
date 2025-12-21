@@ -264,7 +264,9 @@ struct ChatView: View {
                     Divider()
 
                     Button(role: .destructive) {
-                        appState.chatState.clearChat()
+                        Task {
+                            await appState.chatState.clearChat()
+                        }
                     } label: {
                         Label("Clear Chat", systemImage: "trash")
                     }
