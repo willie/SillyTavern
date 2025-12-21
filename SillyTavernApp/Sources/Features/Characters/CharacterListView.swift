@@ -210,6 +210,7 @@ struct CharacterListView: View {
 
 struct CharacterRowView: View {
     let character: CharacterCard
+    @AppStorage("settings.hideNSFWImages") private var hideNSFWImages = true
     @State private var avatarImage: Image?
 
     var body: some View {
@@ -252,7 +253,16 @@ struct CharacterRowView: View {
 
     @ViewBuilder
     private var avatarView: some View {
-        if let image = avatarImage {
+        if character.isNSFW && hideNSFWImages {
+            // Show placeholder for hidden NSFW images
+            RoundedRectangle(cornerRadius: 8)
+                .fill(Color.red.opacity(0.15))
+                .overlay {
+                    Image(systemName: "eye.slash.fill")
+                        .font(.title2)
+                        .foregroundStyle(.secondary)
+                }
+        } else if let image = avatarImage {
             image
                 .resizable()
                 .aspectRatio(contentMode: .fill)

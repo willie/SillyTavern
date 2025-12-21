@@ -19,11 +19,11 @@ final class AppState {
 
     // MARK: - Active Context
 
-    /// Currently active character (for single-character chats)
+    /// Currently active character
     var activeCharacter: CharacterCard?
 
-    /// Currently active chat
-    var activeChat: Chat?
+    /// Currently active chat file
+    var activeChatFile: ChatFile?
 
     /// Shared chat state for the active conversation
     var chatState: ChatState = ChatState()
@@ -44,6 +44,9 @@ final class AppState {
     /// Character store
     var characters: CharacterStore
 
+    /// Chat store (file-based persistence)
+    var chats: ChatStore
+
     /// Settings store
     var settings: SettingsStore
 
@@ -57,6 +60,7 @@ final class AppState {
 
     init() {
         self.characters = CharacterStore()
+        self.chats = ChatStore()
         self.settings = SettingsStore()
         self.worldInfo = WorldInfoStore()
         self.groups = GroupStore()
@@ -70,6 +74,7 @@ final class AppState {
 
     private func loadData() async {
         await characters.load()
+        await chats.loadAll()
         await settings.load()
         await worldInfo.load()
         await groups.load()
@@ -80,17 +85,66 @@ final class AppState {
         }
     }
 
-    // MARK: - Actions
+    // MARK: - Chat Actions
 
+    /// Start a new chat with a character
     func newChat(with character: CharacterCard) {
         self.activeCharacter = character
-        self.activeChat = Chat(characterID: character.id)
-        self.chatState.clearChat()
-        self.navigationPath.append(character)
+
+        // Create a new chat file
+        let chatFile = chats.createChat(
+            for: character,
+            userName: settings.personaName
+        )
+        self.activeChatFile = chatFile
+        chats.activeChat = chatFile
+
+        // Configure chat state with the new chat
+        chatState.configure(
+            chatFile: chatFile,
+            character: character,
+            provider: settings.createProvider(),
+            settings: settings.createPromptSettings(),
+            worldInfo: worldInfo.allEntries,
+            extensionPrompts: settings.createExtensionPrompts(),
+            tokenizer: settings.createTokenizer(),
+            model: settings.model,
+            personaName: settings.personaName,
+            personaDescription: settings.personaDescription
+        )
+
+        // Navigate to chat
+        self.navigationPath.append(ChatRoute(character: character))
     }
 
-    func openChat(_ chat: Chat) {
-        self.activeChat = chat
+    /// Open an existing chat
+    func openChat(_ chatFile: ChatFile, for character: CharacterCard) {
+        self.activeCharacter = character
+        self.activeChatFile = chatFile
+        chats.activeChat = chatFile
+
+        // Configure chat state with the existing chat
+        chatState.configure(
+            chatFile: chatFile,
+            character: character,
+            provider: settings.createProvider(),
+            settings: settings.createPromptSettings(),
+            worldInfo: worldInfo.allEntries,
+            extensionPrompts: settings.createExtensionPrompts(),
+            tokenizer: settings.createTokenizer(),
+            model: settings.model,
+            personaName: settings.personaName,
+            personaDescription: settings.personaDescription
+        )
+
+        // Navigate to chat
+        self.navigationPath.append(ChatRoute(character: character))
+    }
+
+    /// Save the active chat
+    func saveActiveChat() async {
+        guard let chatFile = activeChatFile, let character = activeCharacter else { return }
+        await chats.saveActiveChat(for: character)
     }
 }
 
@@ -532,59 +586,17 @@ final class GroupStore {
     }
 }
 
-// MARK: - Chat Model (Placeholder)
-
-@Observable
-final class Chat: Identifiable, Hashable {
-    let id: UUID
-    let characterID: UUID
-    var messages: [Message] = []
-    var createdAt: Date
-    var updatedAt: Date
-
-    init(id: UUID = UUID(), characterID: UUID) {
-        self.id = id
-        self.characterID = characterID
-        self.createdAt = Date()
-        self.updatedAt = Date()
-    }
-
-    static func == (lhs: Chat, rhs: Chat) -> Bool {
-        lhs.id == rhs.id
-    }
-
-    func hash(into hasher: inout Hasher) {
-        hasher.combine(id)
-    }
-}
-
-// MARK: - Message Model (Placeholder)
-
-@Observable
-final class Message: Identifiable, Hashable {
-    let id: UUID
-    var role: MessageRole
-    var content: String
-    var timestamp: Date
-
-    init(id: UUID = UUID(), role: MessageRole, content: String) {
-        self.id = id
-        self.role = role
-        self.content = content
-        self.timestamp = Date()
-    }
-
-    static func == (lhs: Message, rhs: Message) -> Bool {
-        lhs.id == rhs.id
-    }
-
-    func hash(into hasher: inout Hasher) {
-        hasher.combine(id)
-    }
-}
+// MARK: - Message Role (for LLM providers)
 
 enum MessageRole: String, Codable, Sendable {
     case system
     case user
     case assistant
+}
+
+// MARK: - Navigation Routes
+
+/// Route for navigating to a chat with a character
+struct ChatRoute: Hashable {
+    let character: CharacterCard
 }

@@ -1,6 +1,7 @@
 import SwiftUI
 
 #if os(macOS)
+
 /// Root view for macOS using NavigationSplitView
 struct RootView_macOS: View {
     @Environment(AppState.self) private var appState
@@ -34,7 +35,10 @@ struct RootView_macOS: View {
                     }
                 }
                 .navigationDestination(for: CharacterCard.self) { character in
-                    ChatDetailView_macOS(character: character)
+                    CharacterDetailView(character: character)
+                }
+                .navigationDestination(for: ChatRoute.self) { route in
+                    ChatDetailView_macOS(character: route.character)
                 }
                 .navigationDestination(for: WorldInfoBook.self) { book in
                     WorldInfoBookDetailView(book: book)
@@ -91,14 +95,24 @@ struct SidebarView: View {
 struct ChatListView: View {
     @Environment(AppState.self) private var appState
 
+    /// Characters that have saved chats
+    private var charactersWithChats: [CharacterCard] {
+        appState.characters.characters.filter { character in
+            !appState.chats.chats(for: character).isEmpty
+        }
+    }
+
     var body: some View {
         List {
-            if appState.characters.characters.isEmpty {
-                Text("No chats yet")
-                    .foregroundStyle(.secondary)
+            if charactersWithChats.isEmpty {
+                ContentUnavailableView {
+                    Label("No Chats", systemImage: "bubble.left.and.bubble.right")
+                } description: {
+                    Text("Start a chat with a character")
+                }
             } else {
-                ForEach(appState.characters.characters) { character in
-                    NavigationLink(value: character) {
+                ForEach(charactersWithChats) { character in
+                    NavigationLink(value: ChatRoute(character: character)) {
                         CharacterRowView(character: character)
                     }
                 }
@@ -107,11 +121,16 @@ struct ChatListView: View {
         .navigationTitle("Chats")
         .toolbar {
             ToolbarItem(placement: .primaryAction) {
-                Button {
-                    // TODO: New chat
+                Menu {
+                    ForEach(appState.characters.characters) { character in
+                        Button(character.name) {
+                            appState.newChat(with: character)
+                        }
+                    }
                 } label: {
                     Image(systemName: "plus")
                 }
+                .disabled(appState.characters.characters.isEmpty)
             }
         }
     }
@@ -123,136 +142,137 @@ struct ChatDetailView_macOS: View {
     let character: CharacterCard
     @Environment(AppState.self) private var appState
 
-    private var chatState: ChatState { appState.chatState }
-
     var body: some View {
         VStack(spacing: 0) {
             // Messages
-            ScrollViewReader { proxy in
-                ScrollView {
-                    LazyVStack(spacing: 12) {
-                        ForEach(appState.chatState.messages) { message in
-                            MessageBubble_macOS(
-                                content: message.content,
-                                isUser: message.role == .user,
-                                characterName: message.role == .assistant ? character.name : nil
-                            )
-                            .id(message.id)
-                        }
-                    }
-                    .padding()
-                }
-                .onChange(of: appState.chatState.messages.count) {
-                    if let lastMessage = appState.chatState.messages.last {
-                        withAnimation {
-                            proxy.scrollTo(lastMessage.id, anchor: .bottom)
-                        }
-                    }
-                }
-            }
+            messagesScrollView
 
             // Error banner
             if let error = appState.chatState.error {
-                HStack {
-                    Image(systemName: "exclamationmark.triangle")
-                    Text(error.localizedDescription)
-                        .font(.caption)
-                    Spacer()
-                    Button("Dismiss") {
-                        appState.chatState.error = nil
-                    }
-                    .font(.caption)
-                    .buttonStyle(.plain)
-                }
-                .padding(8)
-                .background(Color.red.opacity(0.1))
-                .foregroundStyle(.red)
+                errorBanner(error)
             }
 
             Divider()
 
             // Input bar
-            HStack(spacing: 12) {
-                @Bindable var chatState = appState.chatState
-                TextField("Message...", text: $chatState.inputText, axis: .vertical)
-                    .textFieldStyle(.plain)
-                    .padding(8)
-                    .background(Color.secondary.opacity(0.1))
-                    .clipShape(RoundedRectangle(cornerRadius: 8))
-                    .lineLimit(1...5)
-                    .disabled(appState.chatState.isGenerating)
-                    .onSubmit {
-                        if !appState.chatState.inputText.isEmpty && !appState.chatState.isGenerating {
-                            Task { await appState.chatState.send() }
-                        }
-                    }
-
-                Button {
-                    Task { await appState.chatState.send() }
-                } label: {
-                    if appState.chatState.isGenerating {
-                        ProgressView()
-                            .scaleEffect(0.7)
-                    } else {
-                        Image(systemName: "arrow.up.circle.fill")
-                            .font(.title2)
-                    }
-                }
-                .buttonStyle(.plain)
-                .disabled(appState.chatState.inputText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || appState.chatState.isGenerating)
-                .keyboardShortcut(.return, modifiers: .command)
-            }
-            .padding()
+            inputBar
         }
         .navigationTitle(character.name)
         .toolbar {
-            ToolbarItemGroup {
-                // Token count display
-                Text("\(TokenCounter.format(appState.chatState.tokenCount)) / \(TokenCounter.format(appState.chatState.maxContextTokens))")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-                    .monospacedDigit()
-
-                Button {
-                    Task { await appState.chatState.regenerate() }
-                } label: {
-                    Label("Regenerate", systemImage: "arrow.clockwise")
-                }
-                .disabled(appState.chatState.isGenerating || appState.chatState.messages.isEmpty)
-                .keyboardShortcut("r", modifiers: .command)
-
-                Button {
-                    Task { await appState.chatState.continueGeneration() }
-                } label: {
-                    Label("Continue", systemImage: "arrow.right")
-                }
-                .disabled(appState.chatState.isGenerating || appState.chatState.messages.last?.role != .assistant)
-                .keyboardShortcut(.return, modifiers: [.command, .shift])
-            }
-        }
-        .onAppear {
-            configureChatState()
+            toolbarContent
         }
     }
 
-    private func configureChatState() {
-        if let provider = appState.settings.createProvider() {
-            appState.chatState.configure(
-                character: character,
-                provider: provider,
-                settings: appState.settings.createPromptSettings(),
-                worldInfo: appState.worldInfo.allEntries,
-                extensionPrompts: appState.settings.createExtensionPrompts(),
-                tokenizer: appState.settings.createTokenizer(),
-                model: appState.settings.model,
-                personaName: appState.settings.personaName,
-                personaDescription: appState.settings.personaDescription
-            )
-        } else {
-            appState.chatState.character = character
-            if !character.first_mes.isEmpty && appState.chatState.messages.isEmpty {
-                appState.chatState.messages = [Message(role: .assistant, content: character.first_mes)]
+    // MARK: - Messages
+
+    private var messagesScrollView: some View {
+        ScrollViewReader { proxy in
+            ScrollView {
+                LazyVStack(spacing: 12) {
+                    ForEach(appState.chatState.messages) { message in
+                        MessageBubble_macOS(
+                            content: message.displayedMessage,
+                            isUser: message.is_user,
+                            characterName: message.is_user ? nil : message.name,
+                            hasSwipes: message.hasSwipes,
+                            swipeInfo: message.hasSwipes ? "\(( message.swipe_id ?? 0) + 1)/\(message.swipeCount)" : nil
+                        )
+                        .id(message.id)
+                    }
+                }
+                .padding()
             }
+            .onChange(of: appState.chatState.messages.count) {
+                if let lastMessage = appState.chatState.messages.last {
+                    withAnimation {
+                        proxy.scrollTo(lastMessage.id, anchor: .bottom)
+                    }
+                }
+            }
+        }
+    }
+
+    // MARK: - Error Banner
+
+    private func errorBanner(_ error: ChatError) -> some View {
+        HStack {
+            Image(systemName: "exclamationmark.triangle")
+            Text(error.localizedDescription)
+                .font(.caption)
+            Spacer()
+            Button("Dismiss") {
+                appState.chatState.error = nil
+            }
+            .font(.caption)
+            .buttonStyle(.plain)
+        }
+        .padding(8)
+        .background(Color.red.opacity(0.1))
+        .foregroundStyle(.red)
+    }
+
+    // MARK: - Input Bar
+
+    private var inputBar: some View {
+        HStack(spacing: 12) {
+            @Bindable var chatState = appState.chatState
+            TextField("Message...", text: $chatState.inputText, axis: .vertical)
+                .textFieldStyle(.plain)
+                .padding(8)
+                .background(Color.secondary.opacity(0.1))
+                .clipShape(RoundedRectangle(cornerRadius: 8))
+                .lineLimit(1...5)
+                .disabled(appState.chatState.isGenerating)
+                .onSubmit {
+                    if !appState.chatState.inputText.isEmpty && !appState.chatState.isGenerating {
+                        Task { await appState.chatState.send() }
+                    }
+                }
+
+            Button {
+                Task { await appState.chatState.send() }
+            } label: {
+                if appState.chatState.isGenerating {
+                    ProgressView()
+                        .scaleEffect(0.7)
+                } else {
+                    Image(systemName: "arrow.up.circle.fill")
+                        .font(.title2)
+                }
+            }
+            .buttonStyle(.plain)
+            .disabled(appState.chatState.inputText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || appState.chatState.isGenerating)
+            .keyboardShortcut(.return, modifiers: .command)
+        }
+        .padding()
+    }
+
+    // MARK: - Toolbar
+
+    @ToolbarContentBuilder
+    private var toolbarContent: some ToolbarContent {
+        ToolbarItemGroup {
+            // Token count display
+            Text("\(TokenCounter.format(appState.chatState.tokenCount)) / \(TokenCounter.format(appState.chatState.maxContextTokens))")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+                .monospacedDigit()
+
+            Button {
+                Task { await appState.chatState.regenerate() }
+            } label: {
+                Label("Regenerate", systemImage: "arrow.clockwise")
+            }
+            .disabled(appState.chatState.isGenerating || appState.chatState.messages.isEmpty)
+            .keyboardShortcut("r", modifiers: .command)
+
+            Button {
+                Task { await appState.chatState.continueGeneration() }
+            } label: {
+                Label("Continue", systemImage: "arrow.right")
+            }
+            .disabled(appState.chatState.isGenerating || appState.chatState.messages.isEmpty || appState.chatState.messages.last?.is_user == true)
+            .keyboardShortcut(.return, modifiers: [.command, .shift])
         }
     }
 }
@@ -302,18 +322,34 @@ struct MessageBubble_macOS: View {
     let content: String
     let isUser: Bool
     let characterName: String?
+    var hasSwipes: Bool = false
+    var swipeInfo: String? = nil
 
     var body: some View {
         HStack {
             if isUser { Spacer(minLength: 100) }
 
-            VStack(alignment: isUser ? .trailing : .leading) {
+            VStack(alignment: isUser ? .trailing : .leading, spacing: 4) {
+                // Character name
                 if let name = characterName, !isUser {
-                    Text(name)
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
+                    HStack {
+                        Text(name)
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+
+                        // Swipe indicator
+                        if hasSwipes, let info = swipeInfo {
+                            Text(info)
+                                .font(.caption2)
+                                .padding(.horizontal, 6)
+                                .padding(.vertical, 2)
+                                .background(Color.secondary.opacity(0.2))
+                                .clipShape(Capsule())
+                        }
+                    }
                 }
 
+                // Message content
                 Text(content)
                     .padding(12)
                     .background(isUser ? Color.accentColor : Color.secondary.opacity(0.15))

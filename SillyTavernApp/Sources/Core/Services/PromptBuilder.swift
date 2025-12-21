@@ -175,7 +175,7 @@ struct PromptBuilder {
 
     /// Build the final prompt for sending to an LLM.
     func build(
-        chatHistory: [Message],
+        chatHistory: [LLMMessage],
         type: GenerationType = .normal,
         quietPrompt: String? = nil,
         tokenCounter: @Sendable (String) -> Int = { $0.count / 4 }  // Simple estimate
@@ -403,10 +403,10 @@ struct PromptBuilder {
     }
 
     /// Build world info entries that match the current chat context.
-    private func buildWorldInfo(chatHistory: [Message]) -> (before: [WorldInfoEntry], after: [WorldInfoEntry]) {
+    private func buildWorldInfo(chatHistory: [LLMMessage]) -> (before: [WorldInfoEntry], after: [WorldInfoEntry]) {
         // Combine recent chat for keyword matching
         let recentContext = chatHistory.suffix(10)
-            .map { $0.content }
+            .map { $0.content.textValue }
             .joined(separator: "\n")
 
         var beforeEntries: [WorldInfoEntry] = []
@@ -493,7 +493,7 @@ struct PromptBuilder {
 
     /// Build chat history with absolute prompt injection.
     private func buildChatHistory(
-        chatHistory: [Message],
+        chatHistory: [LLMMessage],
         absolutePrompts: [PromptEntry],
         tokenBudget: Int,
         tokenCounter: @Sendable (String) -> Int
@@ -508,13 +508,14 @@ struct PromptBuilder {
         var historyMessages: [(index: Int, message: LLMMessage, tokens: Int)] = []
 
         for (index, message) in chatHistory.enumerated().reversed() {
-            let llmRole: LLMRole = message.role == .user ? .user : .assistant
+            // Message already has correct role, just need to add name if missing
+            let messageText = message.content.textValue
             let llmMessage = LLMMessage(
-                role: llmRole,
-                content: message.content,
-                name: message.role == .user ? (personaName ?? "User") : character.name
+                role: message.role,
+                content: messageText,
+                name: message.name ?? (message.role == .user ? (personaName ?? "User") : character.name)
             )
-            let tokens = tokenCounter(message.content)
+            let tokens = tokenCounter(messageText)
             historyMessages.append((index, llmMessage, tokens))
         }
 

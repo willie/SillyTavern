@@ -105,7 +105,9 @@ CSRF token required for mutations: fetch from `/csrf-token`, send as `x-csrf-tok
 
 ## SwiftUI Native App
 
-The `SillyTavernApp/` directory contains a native macOS/iOS SwiftUI client.
+The `SillyTavernApp/` directory contains a native macOS/iOS SwiftUI client. This native app is intended to be a complete port of SillyTavern to Swift and SwiftUI and should be on-disk compatible with SillyTavern's data structures.
+
+**See [SillyTavernApp/CLAUDE.md](SillyTavernApp/CLAUDE.md) for detailed Swift/SwiftUI architecture documentation.**
 
 ```bash
 cd SillyTavernApp

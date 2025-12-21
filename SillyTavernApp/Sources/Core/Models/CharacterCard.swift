@@ -41,6 +41,18 @@ final class CharacterCard: Identifiable, Hashable {
     var chat: String = ""
     var create_date: Date?
 
+    // MARK: - Computed Properties
+
+    /// Whether this character is marked as NSFW (based on tags)
+    var isNSFW: Bool {
+        let nsfwKeywords = ["nsfw", "18+", "adult", "explicit", "mature", "r18", "r-18"]
+        return tags.contains { tag in
+            nsfwKeywords.contains { keyword in
+                tag.lowercased().contains(keyword)
+            }
+        }
+    }
+
     // MARK: - Raw Storage
 
     /// Raw JSON storage for preserving unknown fields during round-trip.

@@ -6,6 +6,7 @@ struct CharacterDetailView: View {
     @Bindable var character: CharacterCard
     @Environment(AppState.self) private var appState
     @Environment(\.dismiss) private var dismiss
+    @AppStorage("settings.hideNSFWImages") private var hideNSFWImages = true
     @State private var isEditing = false
     @State private var avatarImage: Image?
 
@@ -17,6 +18,9 @@ struct CharacterDetailView: View {
 
                 // Quick actions
                 actionButtons
+
+                // Saved chats for this character
+                savedChatsSection
 
                 Divider()
 
@@ -92,7 +96,21 @@ struct CharacterDetailView: View {
 
     @ViewBuilder
     private var avatarView: some View {
-        if let image = avatarImage {
+        if character.isNSFW && hideNSFWImages {
+            // Show placeholder for hidden NSFW images
+            RoundedRectangle(cornerRadius: 16)
+                .fill(Color.red.opacity(0.15))
+                .overlay {
+                    VStack(spacing: 8) {
+                        Image(systemName: "eye.slash.fill")
+                            .font(.system(size: 32))
+                        Text("NSFW")
+                            .font(.caption)
+                            .fontWeight(.medium)
+                    }
+                    .foregroundStyle(.secondary)
+                }
+        } else if let image = avatarImage {
             image
                 .resizable()
                 .aspectRatio(contentMode: .fill)
@@ -145,6 +163,52 @@ struct CharacterDetailView: View {
                 )
             }
             .buttonStyle(.bordered)
+        }
+    }
+
+    // MARK: - Saved Chats
+
+    private var savedChats: [ChatFile] {
+        appState.chats.chats(for: character)
+    }
+
+    @ViewBuilder
+    private var savedChatsSection: some View {
+        if !savedChats.isEmpty {
+            VStack(alignment: .leading, spacing: 12) {
+                Text("Saved Chats")
+                    .font(.headline)
+
+                ForEach(savedChats) { chat in
+                    Button {
+                        appState.openChat(chat, for: character)
+                    } label: {
+                        HStack {
+                            VStack(alignment: .leading, spacing: 4) {
+                                Text(chat.fileName)
+                                    .fontWeight(.medium)
+                                Text("\(chat.messages.count) messages")
+                                    .font(.caption)
+                                    .foregroundStyle(.secondary)
+                            }
+                            Spacer()
+                            if let lastModified = chat.lastModified {
+                                Text(lastModified, style: .relative)
+                                    .font(.caption)
+                                    .foregroundStyle(.secondary)
+                            }
+                            Image(systemName: "chevron.right")
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                        }
+                        .padding(12)
+                        .background(Color.secondary.opacity(0.1))
+                        .clipShape(RoundedRectangle(cornerRadius: 8))
+                    }
+                    .buttonStyle(.plain)
+                }
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
         }
     }
 
