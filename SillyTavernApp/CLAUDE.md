@@ -40,6 +40,7 @@ swift run              # Build and run (preferred for debugging)
 - `Services/Providers/` - LLM API implementations
   - `OpenAIProvider.swift`, `ClaudeProvider.swift`, `OpenRouterProvider.swift`
   - `GeminiProvider.swift`, `MistralProvider.swift`
+- `Services/FolderMonitor.swift` - NSFilePresenter wrapper for disk sync
 
 ### Features Layer (`Sources/Features/`)
 - `Characters/` - Character list, detail, import views
@@ -59,6 +60,47 @@ Chat JSONL format:
 - Lines 2+: Messages (`name`, `is_user`, `send_date`, `mes`, `swipes`, `swipe_id`, `extra`)
 
 ## Key Patterns
+
+### Disk-State Synchronization (CRITICAL)
+
+**This app must stay in sync with on-disk data at all times.** The same data directory may be accessed by:
+- This SwiftUI app
+- The Node.js SillyTavern server
+- External file editors
+
+Each store uses `FolderMonitor` (NSFilePresenter) to watch its directory:
+
+```swift
+@Observable @MainActor
+final class CharacterStore {
+    var characters: [CharacterCard] = []
+    private var monitor: FolderMonitor?
+
+    func load() async {
+        // Start monitor on first load
+        if monitor == nil {
+            monitor = FolderMonitor(url: directory) { [weak self] in
+                Task { @MainActor in await self?.load() }
+            }
+            monitor?.start()
+        }
+        // Read from disk → update @Observable property → SwiftUI refreshes
+        characters = try await fileStore.loadCharacters()
+    }
+}
+```
+
+**Flow:**
+```
+Disk write (save/delete/external) → FolderMonitor fires → load() re-reads
+    → @Observable property updates → SwiftUI views refresh automatically
+```
+
+**Rules:**
+1. **Never manually update cached arrays** - let the monitor handle it
+2. **Save to disk immediately** - don't hold unsaved state
+3. **All stores watch their directories** - ChatStore, CharacterStore, WorldInfoStore, GroupStore
+4. **Use NSFilePresenter** - works on both macOS and iOS, handles subdirectories
 
 ### State Management
 ```swift
@@ -93,3 +135,5 @@ Sampling parameters: `maxTokens`, `temperature`, `topP`, `topK`, `minP`, `freque
 | Modify macOS layout | `Sources/App/Platform/macOS/RootView_macOS.swift` |
 | Add settings option | `Sources/App/AppState.swift` (SettingsStore), `Sources/Features/Settings/SettingsView.swift` |
 | Group chat logic | `Sources/Core/Models/Group.swift` (GroupChatState) |
+| Add new data store | Create store in `AppState.swift`, add `FolderMonitor` for disk sync |
+| File monitoring | `Sources/Core/Services/FolderMonitor.swift` (NSFilePresenter wrapper) |

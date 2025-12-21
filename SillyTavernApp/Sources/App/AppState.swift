@@ -91,31 +91,37 @@ final class AppState {
     func newChat(with character: CharacterCard) {
         self.activeCharacter = character
 
-        // Create a new chat file
-        let chatFile = chats.createChat(
-            for: character,
-            userName: settings.personaName
-        )
-        self.activeChatFile = chatFile
-        chats.activeChat = chatFile
+        Task {
+            do {
+                // Create a new chat file (saves to disk immediately)
+                let chatFile = try await chats.createChat(
+                    for: character,
+                    userName: settings.personaName
+                )
+                self.activeChatFile = chatFile
+                chats.activeChat = chatFile
 
-        // Configure chat state with the new chat
-        chatState.configure(
-            chatFile: chatFile,
-            character: character,
-            provider: settings.createProvider(),
-            settings: settings.createPromptSettings(),
-            options: settings.createLLMOptions(),
-            worldInfo: worldInfo.allEntries,
-            extensionPrompts: settings.createExtensionPrompts(),
-            tokenizer: settings.createTokenizer(),
-            model: settings.model,
-            personaName: settings.personaName,
-            personaDescription: settings.personaDescription
-        )
+                // Configure chat state with the new chat
+                chatState.configure(
+                    chatFile: chatFile,
+                    character: character,
+                    provider: settings.createProvider(),
+                    settings: settings.createPromptSettings(),
+                    options: settings.createLLMOptions(),
+                    worldInfo: worldInfo.allEntries,
+                    extensionPrompts: settings.createExtensionPrompts(),
+                    tokenizer: settings.createTokenizer(),
+                    model: settings.model,
+                    personaName: settings.personaName,
+                    personaDescription: settings.personaDescription
+                )
 
-        // Navigate to chat
-        self.navigationPath.append(ChatRoute(character: character))
+                // Navigate to chat
+                self.navigationPath.append(ChatRoute(character: character))
+            } catch {
+                print("Failed to create chat: \(error)")
+            }
+        }
     }
 
     /// Open an existing chat
@@ -223,12 +229,24 @@ final class CharacterStore {
     var error: Error?
 
     private let fileStore = FileStore()
+    private var monitor: FolderMonitor?
 
     func load() async {
         isLoading = true
         error = nil
 
         do {
+            // Start folder monitor if not already running
+            if monitor == nil {
+                let directory = fileStore.charactersDirectory
+                monitor = FolderMonitor(url: directory) { [weak self] in
+                    Task { @MainActor in
+                        await self?.load()
+                    }
+                }
+                monitor?.start()
+            }
+
             characters = try await fileStore.loadCharacters()
         } catch {
             self.error = error
@@ -239,22 +257,22 @@ final class CharacterStore {
     }
 
     func add(_ character: CharacterCard) {
-        characters.append(character)
         Task {
             try? fileStore.saveCharacter(character)
+            // FolderMonitor will trigger load() to refresh characters
         }
     }
 
     func remove(_ character: CharacterCard) {
-        characters.removeAll { $0.id == character.id }
         Task {
             try? fileStore.deleteCharacter(character)
+            // FolderMonitor will trigger load() to refresh characters
         }
     }
 
     func importCharacter(from url: URL) async throws -> CharacterCard {
         let character = try await fileStore.importCharacter(from: url)
-        characters.append(character)
+        // FolderMonitor will trigger load() to refresh characters
         return character
     }
 }
@@ -505,12 +523,24 @@ final class WorldInfoStore {
     var error: Error?
 
     private let fileStore = FileStore()
+    private var monitor: FolderMonitor?
 
     func load() async {
         isLoading = true
         error = nil
 
         do {
+            // Start folder monitor if not already running
+            if monitor == nil {
+                let directory = fileStore.worldInfoDirectory
+                monitor = FolderMonitor(url: directory) { [weak self] in
+                    Task { @MainActor in
+                        await self?.load()
+                    }
+                }
+                monitor?.start()
+            }
+
             books = try await fileStore.loadWorldInfoBooks()
         } catch {
             self.error = error
@@ -527,17 +557,17 @@ final class WorldInfoStore {
 
     /// Add a new book
     func add(_ book: WorldInfoBook) {
-        books.append(book)
         Task {
             await save(book)
+            // FolderMonitor will trigger load() to refresh books
         }
     }
 
     /// Remove a book
     func remove(_ book: WorldInfoBook) {
-        books.removeAll { $0.id == book.id }
         Task {
             await delete(book)
+            // FolderMonitor will trigger load() to refresh books
         }
     }
 
@@ -545,6 +575,7 @@ final class WorldInfoStore {
     func save(_ book: WorldInfoBook) async {
         do {
             try await fileStore.saveWorldInfoBook(book)
+            // FolderMonitor will trigger load() to refresh books
         } catch {
             print("Failed to save world info book: \(error)")
         }
@@ -554,6 +585,7 @@ final class WorldInfoStore {
     private func delete(_ book: WorldInfoBook) async {
         do {
             try await fileStore.deleteWorldInfoBook(book)
+            // FolderMonitor will trigger load() to refresh books
         } catch {
             print("Failed to delete world info book: \(error)")
         }
@@ -562,7 +594,7 @@ final class WorldInfoStore {
     /// Import a book from URL
     func importBook(from url: URL) async throws -> WorldInfoBook {
         let book = try await fileStore.importWorldInfoBook(from: url)
-        books.append(book)
+        // FolderMonitor will trigger load() to refresh books
         return book
     }
 }
@@ -576,12 +608,24 @@ final class GroupStore {
     var error: Error?
 
     private let fileStore = FileStore()
+    private var monitor: FolderMonitor?
 
     func load() async {
         isLoading = true
         error = nil
 
         do {
+            // Start folder monitor if not already running
+            if monitor == nil {
+                let directory = fileStore.groupsDirectory
+                monitor = FolderMonitor(url: directory) { [weak self] in
+                    Task { @MainActor in
+                        await self?.load()
+                    }
+                }
+                monitor?.start()
+            }
+
             groups = try await fileStore.loadGroups()
         } catch {
             self.error = error
@@ -593,17 +637,17 @@ final class GroupStore {
 
     /// Add a new group
     func add(_ group: CharacterGroup) {
-        groups.append(group)
         Task {
             await save(group)
+            // FolderMonitor will trigger load() to refresh groups
         }
     }
 
     /// Remove a group
     func remove(_ group: CharacterGroup) {
-        groups.removeAll { $0.id == group.id }
         Task {
             await delete(group)
+            // FolderMonitor will trigger load() to refresh groups
         }
     }
 
@@ -611,6 +655,7 @@ final class GroupStore {
     func save(_ group: CharacterGroup) async {
         do {
             try await fileStore.saveGroup(group)
+            // FolderMonitor will trigger load() to refresh groups
         } catch {
             print("Failed to save group: \(error)")
         }
@@ -620,6 +665,7 @@ final class GroupStore {
     private func delete(_ group: CharacterGroup) async {
         do {
             try await fileStore.deleteGroup(group)
+            // FolderMonitor will trigger load() to refresh groups
         } catch {
             print("Failed to delete group: \(error)")
         }

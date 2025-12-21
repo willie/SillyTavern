@@ -19,6 +19,7 @@ final class ChatStore {
 
     private let fileManager = FileManager.default
     private let fileStore = FileStore()
+    private var monitor: FolderMonitor?
 
     // MARK: - Directory Structure
 
@@ -59,6 +60,17 @@ final class ChatStore {
         do {
             // Ensure chats directory exists
             try fileManager.createDirectory(at: chatsDirectory, withIntermediateDirectories: true)
+
+            // Start folder monitor if not already running
+            if monitor == nil {
+                let directory = chatsDirectory
+                monitor = FolderMonitor(url: directory) { [weak self] in
+                    Task { @MainActor in
+                        await self?.loadAll()
+                    }
+                }
+                monitor?.start()
+            }
 
             // Get all character directories
             let contents = try fileManager.contentsOfDirectory(
@@ -152,15 +164,7 @@ final class ChatStore {
         }
 
         try chat.save(to: fileURL)
-
-        // Update cache
-        let characterKey = characterDirectoryName(for: character)
-        if chatsByCharacter[characterKey] == nil {
-            chatsByCharacter[characterKey] = []
-        }
-        if !chatsByCharacter[characterKey]!.contains(where: { $0.id == chat.id }) {
-            chatsByCharacter[characterKey]!.insert(chat, at: 0)
-        }
+        // FolderMonitor will trigger loadAll() to refresh chatsByCharacter
     }
 
     /// Auto-save the active chat
@@ -180,7 +184,7 @@ final class ChatStore {
         for character: CharacterCard,
         userName: String = "User",
         fileName: String? = nil
-    ) -> ChatFile {
+    ) async throws -> ChatFile {
         let chatName = fileName ?? "Chat \(Date().formatted(date: .abbreviated, time: .shortened))"
 
         let chat = ChatFile(
@@ -203,6 +207,9 @@ final class ChatStore {
             chat.addCharacterMessage(firstMessage)
         }
 
+        // Save immediately so FolderMonitor picks it up
+        try await save(chat, for: character)
+
         return chat
     }
 
@@ -217,10 +224,7 @@ final class ChatStore {
         guard let fileURL = chat.fileURL else { return }
 
         try fileManager.removeItem(at: fileURL)
-
-        // Update cache
-        let key = characterDirectoryName(for: character)
-        chatsByCharacter[key]?.removeAll { $0.id == chat.id }
+        // FolderMonitor will trigger loadAll() to refresh chatsByCharacter
     }
 
     /// Rename a chat
