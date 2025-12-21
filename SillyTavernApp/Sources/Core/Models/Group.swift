@@ -280,7 +280,7 @@ final class GroupChatState {
     var speakingHistory: [UUID] = []
 
     /// Get the next speaker based on activation strategy
-    func getNextSpeaker() -> GroupMember? {
+    func getNextSpeaker(lastMessage: String? = nil, lastSpeakerName: String? = nil) -> GroupMember? {
         guard let group = group else { return nil }
         let enabled = group.enabledMembers
 
@@ -288,9 +288,12 @@ final class GroupChatState {
 
         switch group.activationStrategy {
         case .natural:
-            // For natural mode, the AI decides - we use first enabled for prompt
-            // The actual selection happens during generation
-            return enabled.first
+            // Natural mode uses mentions and talkativeness
+            return selectNaturalOrder(
+                from: enabled,
+                input: lastMessage,
+                bannedName: group.allowSelfResponse ? nil : lastSpeakerName
+            )
 
         case .list:
             // Round-robin through enabled members
@@ -306,6 +309,70 @@ final class GroupChatState {
             // Weighted random based on talkativeness
             return selectPooledSpeaker(from: enabled)
         }
+    }
+
+    /// Select speaker using natural order strategy
+    /// Priority: 1) Mentioned characters, 2) Talkativeness roll, 3) Random fallback
+    private func selectNaturalOrder(from members: [GroupMember], input: String?, bannedName: String?) -> GroupMember? {
+        guard !members.isEmpty else { return nil }
+
+        var activatedMembers: [GroupMember] = []
+
+        // 1. Find mentions in input (excluding banned speaker)
+        if let input = input, !input.isEmpty {
+            let inputWords = extractWords(from: input.lowercased())
+            for member in members {
+                guard let character = member.character else { continue }
+                guard character.name != bannedName else { continue }
+
+                let nameWords = extractWords(from: character.name.lowercased())
+                if inputWords.contains(where: { nameWords.contains($0) }) {
+                    activatedMembers.append(member)
+                    break // Only add one mention
+                }
+            }
+        }
+
+        // 2. Activation by talkativeness (shuffled, excluding banned)
+        var chattyMembers: [GroupMember] = []
+        let shuffledMembers = members.shuffled()
+
+        for member in shuffledMembers {
+            guard let character = member.character else { continue }
+            guard character.name != bannedName else { continue }
+
+            let talkativeness = character.talkativeness
+            let rollValue = Double.random(in: 0...1)
+
+            if talkativeness >= rollValue {
+                activatedMembers.append(member)
+            }
+            if talkativeness > 0 {
+                chattyMembers.append(member)
+            }
+        }
+
+        // 3. Pick random if no one activated
+        if activatedMembers.isEmpty {
+            let pool = chattyMembers.isEmpty ? members : chattyMembers
+            // Filter out banned speaker
+            let validPool = pool.filter { $0.character?.name != bannedName }
+            if let random = validPool.randomElement() {
+                return random
+            }
+            // If all are banned (shouldn't happen), just pick first
+            return members.first
+        }
+
+        // Return first activated (prioritizes mentions)
+        return activatedMembers.first
+    }
+
+    /// Extract words from text for mention matching
+    private func extractWords(from text: String) -> Set<String> {
+        let words = text.components(separatedBy: CharacterSet.alphanumerics.inverted)
+            .filter { !$0.isEmpty && $0.count > 1 }
+        return Set(words)
     }
 
     /// Select speaker using pooled (weighted) strategy
