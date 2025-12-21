@@ -189,9 +189,17 @@ final class ChatStore {
             character_name: character.name
         )
 
+        // Select greeting (first_mes or random from alternate_greetings)
+        let greeting: String
+        if !character.alternate_greetings.isEmpty && Bool.random() {
+            greeting = character.alternate_greetings.randomElement() ?? character.first_mes
+        } else {
+            greeting = character.first_mes
+        }
+
         // Add first message if character has one
-        if !character.first_mes.isEmpty {
-            let firstMessage = substituteParams(character.first_mes, character: character, userName: userName)
+        if !greeting.isEmpty {
+            let firstMessage = substituteParams(greeting, character: character, userName: userName)
             chat.addCharacterMessage(firstMessage)
         }
 

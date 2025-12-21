@@ -177,6 +177,7 @@ struct PromptBuilder {
     func build(
         chatHistory: [LLMMessage],
         type: GenerationType = .normal,
+        isGroupChat: Bool = false,
         quietPrompt: String? = nil,
         tokenCounter: @Sendable (String) -> Int = { $0.count / 4 }  // Simple estimate
     ) -> BuiltPrompt {
@@ -316,6 +317,22 @@ struct PromptBuilder {
             controlPrompts.append(PromptEntry(
                 identifier: "impersonate",
                 content: substituteParams(settings.impersonationPrompt)
+            ))
+        }
+
+        // Continue nudge prompt
+        if type == .continue && !settings.continueNudgePrompt.isEmpty {
+            controlPrompts.append(PromptEntry(
+                identifier: "continueNudge",
+                content: substituteParams(settings.continueNudgePrompt)
+            ))
+        }
+
+        // Group nudge prompt
+        if isGroupChat && !settings.groupNudgePrompt.isEmpty {
+            controlPrompts.append(PromptEntry(
+                identifier: "groupNudge",
+                content: substituteParams(settings.groupNudgePrompt)
             ))
         }
 
