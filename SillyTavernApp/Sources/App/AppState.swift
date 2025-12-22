@@ -759,4 +759,10 @@ enum MessageRole: String, Codable, Sendable {
 /// Route for navigating to a chat with a character
 struct ChatRoute: Hashable {
     let character: CharacterCard
+    let chat: ChatFile?
+
+    init(character: CharacterCard, chat: ChatFile? = nil) {
+        self.character = character
+        self.chat = chat
+    }
 }

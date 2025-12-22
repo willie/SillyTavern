@@ -38,7 +38,7 @@ struct RootView_macOS: View {
                     CharacterDetailView(character: character)
                 }
                 .navigationDestination(for: ChatRoute.self) { route in
-                    ChatDetailView_macOS(character: route.character)
+                    ChatDetailView_macOS(character: route.character, chat: route.chat)
                 }
                 .navigationDestination(for: WorldInfoBook.self) { book in
                     WorldInfoBookDetailView(book: book)
@@ -95,25 +95,26 @@ struct SidebarView: View {
 struct ChatListView: View {
     @Environment(AppState.self) private var appState
 
-    /// Characters that have saved chats
-    private var charactersWithChats: [CharacterCard] {
-        appState.characters.characters.filter { character in
-            !appState.chats.chats(for: character).isEmpty
+    /// All chats paired with their characters, sorted by most recent
+    private var allChats: [(chat: ChatFile, character: CharacterCard)] {
+        appState.characters.characters.flatMap { character in
+            appState.chats.chats(for: character).map { (chat: $0, character: character) }
         }
+        .sorted { ($0.chat.lastModified ?? .distantPast) > ($1.chat.lastModified ?? .distantPast) }
     }
 
     var body: some View {
         List {
-            if charactersWithChats.isEmpty {
+            if allChats.isEmpty {
                 ContentUnavailableView {
                     Label("No Chats", systemImage: "bubble.left.and.bubble.right")
                 } description: {
                     Text("Start a chat with a character")
                 }
             } else {
-                ForEach(charactersWithChats) { character in
-                    NavigationLink(value: ChatRoute(character: character)) {
-                        CharacterRowView(character: character)
+                ForEach(allChats, id: \.chat.id) { item in
+                    NavigationLink(value: ChatRoute(character: item.character, chat: item.chat)) {
+                        ChatRowView(chat: item.chat, character: item.character)
                     }
                 }
             }
@@ -144,10 +145,64 @@ struct ChatListView: View {
     }
 }
 
+// MARK: - Chat Row View
+
+struct ChatRowView: View {
+    let chat: ChatFile
+    let character: CharacterCard
+
+    var body: some View {
+        HStack(spacing: 12) {
+            // Character initial
+            Circle()
+                .fill(Color.accentColor.opacity(0.2))
+                .frame(width: 40, height: 40)
+                .overlay {
+                    Text(String(character.name.prefix(1)).uppercased())
+                        .font(.headline)
+                        .foregroundStyle(Color.accentColor)
+                }
+
+            // Chat info
+            VStack(alignment: .leading, spacing: 4) {
+                Text(character.name)
+                    .font(.headline)
+                    .lineLimit(1)
+
+                HStack(spacing: 8) {
+                    Text(chat.fileName)
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                        .lineLimit(1)
+
+                    Text("•")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+
+                    Text("\(chat.messages.count) messages")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+            }
+
+            Spacer()
+
+            // Last modified
+            if let lastModified = chat.lastModified {
+                Text(lastModified, style: .relative)
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+        }
+        .padding(.vertical, 4)
+    }
+}
+
 // MARK: - Chat Detail View
 
 struct ChatDetailView_macOS: View {
     let character: CharacterCard
+    let chat: ChatFile?
     @Environment(AppState.self) private var appState
     @State private var editingMessage: ChatMessage?
     @State private var editText: String = ""
@@ -174,6 +229,22 @@ struct ChatDetailView_macOS: View {
         .navigationTitle(character.name)
         .toolbar {
             toolbarContent
+        }
+        .task(id: chat?.fileURL) {
+            // Load the chat when the view appears or when chat changes
+            if let chat = chat {
+                // Only configure if not already showing this chat
+                if appState.activeChatFile?.fileURL != chat.fileURL {
+                    appState.openChat(chat, for: character)
+                }
+            } else {
+                // No specific chat - open most recent or create new
+                if let mostRecent = appState.chats.chats(for: character).first {
+                    appState.openChat(mostRecent, for: character)
+                } else {
+                    appState.newChat(with: character)
+                }
+            }
         }
         .sheet(item: $editingMessage) { message in
             MessageEditSheet(message: message, editText: $editText) {
