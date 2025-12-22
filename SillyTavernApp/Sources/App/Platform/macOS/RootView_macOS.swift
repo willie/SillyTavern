@@ -231,18 +231,19 @@ struct ChatDetailView_macOS: View {
             toolbarContent
         }
         .task(id: chat?.fileURL) {
-            // Load the chat when the view appears or when chat changes
+            // Configure the chat when the view appears or when chat changes
+            // Use configureChat/createNewChat (not openChat/newChat) since we're already in the view
             if let chat = chat {
                 // Only configure if not already showing this chat
                 if appState.activeChatFile?.fileURL != chat.fileURL {
-                    appState.openChat(chat, for: character)
+                    appState.configureChat(chat, for: character)
                 }
             } else {
-                // No specific chat - open most recent or create new
+                // No specific chat - configure most recent or create new
                 if let mostRecent = appState.chats.chats(for: character).first {
-                    appState.openChat(mostRecent, for: character)
+                    appState.configureChat(mostRecent, for: character)
                 } else {
-                    appState.newChat(with: character)
+                    await appState.createNewChat(with: character)
                 }
             }
         }
@@ -299,6 +300,7 @@ struct ChatDetailView_macOS: View {
                     }
                 }
                 .padding()
+                .padding(.bottom, 60)
             }
             .onScrollGeometryChange(for: Bool.self) { geometry in
                 // Check if scrolled to bottom (within threshold)

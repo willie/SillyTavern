@@ -142,8 +142,14 @@ final class AppState {
         }
     }
 
-    /// Open an existing chat
+    /// Open an existing chat (navigates to chat view)
     func openChat(_ chatFile: ChatFile, for character: CharacterCard) {
+        configureChat(chatFile, for: character)
+        self.navigationPath.append(ChatRoute(character: character, chat: chatFile))
+    }
+
+    /// Configure chat state without navigating (for use when already in chat view)
+    func configureChat(_ chatFile: ChatFile, for character: CharacterCard) {
         // Clear previous chat context
         closeChat()
 
@@ -171,9 +177,47 @@ final class AppState {
             guard let self = self else { return }
             await self.saveActiveChat()
         }
+    }
 
-        // Navigate to chat
-        self.navigationPath.append(ChatRoute(character: character))
+    /// Create a new chat without navigating (for use when already in chat view)
+    func createNewChat(with character: CharacterCard) async {
+        // Clear previous chat context
+        closeChat()
+
+        self.activeCharacter = character
+
+        do {
+            // Create a new chat file (saves to disk immediately)
+            let chatFile = try await chats.createChat(
+                for: character,
+                userName: settings.personaName
+            )
+            self.activeChatFile = chatFile
+            chats.activeChat = chatFile
+
+            // Configure chat state with the new chat
+            chatState.configure(
+                chatFile: chatFile,
+                character: character,
+                provider: settings.createProvider(),
+                settings: settings.createPromptSettings(),
+                options: settings.createLLMOptions(),
+                worldInfo: worldInfo.allEntries,
+                extensionPrompts: settings.createExtensionPrompts(),
+                tokenizer: settings.createTokenizer(),
+                model: settings.model,
+                personaName: settings.personaName,
+                personaDescription: settings.personaDescription
+            )
+
+            // Set up save handler to persist chat changes to disk
+            chatState.saveHandler = { [weak self] in
+                guard let self = self else { return }
+                await self.saveActiveChat()
+            }
+        } catch {
+            self.chats.error = error
+        }
     }
 
     /// Save the active chat
