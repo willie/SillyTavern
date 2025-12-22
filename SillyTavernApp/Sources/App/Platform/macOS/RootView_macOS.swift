@@ -40,6 +40,9 @@ struct RootView_macOS: View {
                 .navigationDestination(for: ChatRoute.self) { route in
                     ChatDetailView_macOS(character: route.character, chat: route.chat)
                 }
+                .navigationDestination(for: GroupChatRoute.self) { route in
+                    GroupChatDetailView_macOS(group: route.group, chat: route.chat)
+                }
                 .navigationDestination(for: WorldInfoBook.self) { book in
                     WorldInfoBookDetailView(book: book)
                 }
@@ -392,6 +395,227 @@ struct ChatDetailView_macOS: View {
                 .font(.caption)
                 .foregroundStyle(.secondary)
                 .monospacedDigit()
+
+            Button {
+                Task { await appState.chatState.regenerate() }
+            } label: {
+                Label("Regenerate", systemImage: "arrow.clockwise")
+            }
+            .disabled(appState.chatState.isGenerating || appState.chatState.messages.isEmpty)
+            .keyboardShortcut("r", modifiers: .command)
+
+            Button {
+                Task { await appState.chatState.continueGeneration() }
+            } label: {
+                Label("Continue", systemImage: "arrow.right")
+            }
+            .disabled(appState.chatState.isGenerating || appState.chatState.messages.isEmpty || appState.chatState.messages.last?.is_user == true)
+            .keyboardShortcut(.return, modifiers: [.command, .shift])
+        }
+    }
+}
+
+// MARK: - Group Chat Detail View
+
+struct GroupChatDetailView_macOS: View {
+    let group: CharacterGroup
+    let chat: ChatFile?
+    @Environment(AppState.self) private var appState
+    @State private var editingMessage: ChatMessage?
+    @State private var editText: String = ""
+    @State private var isAtBottom: Bool = true
+
+    /// Threshold for detecting "at bottom" scroll position
+    private let scrollBottomThreshold: CGFloat = 50
+
+    var body: some View {
+        VStack(spacing: 0) {
+            // Messages
+            messagesScrollView
+
+            // Error banner
+            if let error = appState.chatState.error {
+                errorBanner(error)
+            }
+
+            Divider()
+
+            // Input bar
+            inputBar
+        }
+        .navigationTitle(group.name)
+        .toolbar {
+            toolbarContent
+        }
+        .task(id: chat?.fileURL) {
+            // Configure the chat when the view appears or when chat changes
+            // Use configureGroupChat/createNewGroupChat (not openGroupChat/newGroupChat) since we're already in the view
+            if let chat = chat {
+                // Only configure if not already showing this chat
+                if appState.activeChatFile?.fileURL != chat.fileURL {
+                    appState.configureGroupChat(chat, for: group)
+                }
+            } else {
+                // No specific chat - configure most recent or create new
+                if let mostRecent = appState.chats.chats(for: group).first {
+                    appState.configureGroupChat(mostRecent, for: group)
+                } else {
+                    await appState.createNewGroupChat(with: group)
+                }
+            }
+        }
+        .sheet(item: $editingMessage) { message in
+            MessageEditSheet(message: message, editText: $editText) {
+                // Save changes via ChatState for proper persistence
+                if let index = appState.chatState.messages.firstIndex(where: { $0.id == message.id }) {
+                    // Update the current swipe if swipes exist, otherwise update mes
+                    if let swipes = message.swipes, let swipeId = message.swipe_id, swipeId < swipes.count {
+                        message.swipes?[swipeId] = editText
+                    }
+                    Task {
+                        await appState.chatState.editMessage(at: index, newContent: editText)
+                    }
+                }
+                editingMessage = nil
+            } onCancel: {
+                editingMessage = nil
+            }
+            .onAppear {
+                editText = message.displayedMessage
+            }
+        }
+    }
+
+    // MARK: - Messages
+
+    private var messagesScrollView: some View {
+        ScrollViewReader { proxy in
+            ScrollView {
+                LazyVStack(spacing: 12) {
+                    ForEach(appState.chatState.messages) { message in
+                        MessageBubble_macOS(
+                            message: message,
+                            onEdit: { msg in
+                                editingMessage = msg
+                            },
+                            onDelete: { msg in
+                                Task {
+                                    if let index = appState.chatState.messages.firstIndex(where: { $0.id == msg.id }) {
+                                        await appState.chatState.deleteMessage(at: index)
+                                    }
+                                }
+                            },
+                            onRegenerate: { msg in
+                                Task {
+                                    if let index = appState.chatState.messages.firstIndex(where: { $0.id == msg.id }) {
+                                        await appState.chatState.regenerateFrom(index: index)
+                                    }
+                                }
+                            }
+                        )
+                        .id(message.id)
+                    }
+                }
+                .padding()
+                .padding(.bottom, 60)
+            }
+            .onScrollGeometryChange(for: Bool.self) { geometry in
+                // Check if scrolled to bottom (within threshold)
+                let atBottom = geometry.contentOffset.y + geometry.containerSize.height >= geometry.contentSize.height - scrollBottomThreshold
+                return atBottom
+            } action: { _, newValue in
+                isAtBottom = newValue
+            }
+            .onChange(of: appState.chatState.messages.count) {
+                // Only auto-scroll if user was already at bottom
+                if isAtBottom, let lastMessage = appState.chatState.messages.last {
+                    withAnimation {
+                        proxy.scrollTo(lastMessage.id, anchor: .bottom)
+                    }
+                }
+            }
+            .onChange(of: appState.chatState.streamingText) {
+                // Also scroll during streaming if at bottom
+                if isAtBottom, let lastMessage = appState.chatState.messages.last {
+                    proxy.scrollTo(lastMessage.id, anchor: .bottom)
+                }
+            }
+        }
+    }
+
+    // MARK: - Error Banner
+
+    private func errorBanner(_ error: ChatError) -> some View {
+        HStack {
+            Image(systemName: "exclamationmark.triangle")
+            Text(error.localizedDescription)
+                .font(.caption)
+            Spacer()
+            Button("Dismiss") {
+                appState.chatState.error = nil
+            }
+            .font(.caption)
+            .buttonStyle(.plain)
+        }
+        .padding(8)
+        .background(Color.red.opacity(0.1))
+        .foregroundStyle(.red)
+    }
+
+    // MARK: - Input Bar
+
+    private var inputBar: some View {
+        HStack(spacing: 12) {
+            @Bindable var chatState = appState.chatState
+            TextField("Message...", text: $chatState.inputText, axis: .vertical)
+                .textFieldStyle(.plain)
+                .padding(8)
+                .background(Color.secondary.opacity(0.1))
+                .clipShape(RoundedRectangle(cornerRadius: 8))
+                .lineLimit(1...5)
+                .disabled(appState.chatState.isGenerating)
+                .onSubmit {
+                    if !appState.chatState.inputText.isEmpty && !appState.chatState.isGenerating {
+                        Task { await appState.chatState.send() }
+                    }
+                }
+
+            Button {
+                Task { await appState.chatState.send() }
+            } label: {
+                if appState.chatState.isGenerating {
+                    ProgressView()
+                        .scaleEffect(0.7)
+                } else {
+                    Image(systemName: "arrow.up.circle.fill")
+                        .font(.title2)
+                }
+            }
+            .buttonStyle(.plain)
+            .disabled(appState.chatState.inputText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || appState.chatState.isGenerating)
+            .keyboardShortcut(.return, modifiers: .command)
+            .accessibilityLabel(appState.chatState.isGenerating ? "Generating response" : "Send message")
+        }
+        .padding()
+    }
+
+    // MARK: - Toolbar
+
+    @ToolbarContentBuilder
+    private var toolbarContent: some ToolbarContent {
+        ToolbarItemGroup {
+            // Token count display
+            Text("\(TokenCounter.format(appState.chatState.tokenCount)) / \(TokenCounter.format(appState.chatState.maxContextTokens))")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+                .monospacedDigit()
+
+            // Current speaker display
+            if let speaker = appState.chatState.currentSpeaker {
+                Text("Next: \(speaker.name)")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
 
             Button {
                 Task { await appState.chatState.regenerate() }

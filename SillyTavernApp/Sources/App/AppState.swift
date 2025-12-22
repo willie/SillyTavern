@@ -22,6 +22,9 @@ final class AppState {
     /// Currently active character
     var activeCharacter: CharacterCard?
 
+    /// Currently active group
+    var activeGroup: CharacterGroup?
+
     /// Currently active chat file
     var activeChatFile: ChatFile?
 
@@ -92,6 +95,7 @@ final class AppState {
         chatState.saveHandler = nil
         chatState.stopGeneration()
         activeCharacter = nil
+        activeGroup = nil
         activeChatFile = nil
         chats.activeChat = nil
     }
@@ -222,8 +226,137 @@ final class AppState {
 
     /// Save the active chat
     func saveActiveChat() async {
-        guard activeChatFile != nil, let character = activeCharacter else { return }
-        await chats.saveActiveChat(for: character)
+        if let character = activeCharacter {
+            await chats.saveActiveChat(for: character)
+        } else if let group = activeGroup {
+            await chats.saveActiveChat(for: group)
+        }
+    }
+
+    // MARK: - Group Chat Actions
+
+    /// Start a new group chat
+    func newGroupChat(with group: CharacterGroup) {
+        // Clear previous chat context
+        closeChat()
+
+        self.activeGroup = group
+
+        Task {
+            do {
+                // Create a new chat file (saves to disk immediately)
+                let chatFile = try await chats.createGroupChat(
+                    for: group,
+                    userName: settings.personaName
+                )
+                self.activeChatFile = chatFile
+                chats.activeChat = chatFile
+
+                // Configure chat state with the group
+                chatState.configureGroup(
+                    chatFile: chatFile,
+                    group: group,
+                    provider: settings.createProvider(),
+                    settings: settings.createPromptSettings(),
+                    options: settings.createLLMOptions(),
+                    worldInfo: worldInfo.allEntries,
+                    extensionPrompts: settings.createExtensionPrompts(),
+                    tokenizer: settings.createTokenizer(),
+                    model: settings.model,
+                    personaName: settings.personaName,
+                    personaDescription: settings.personaDescription
+                )
+
+                // Set up save handler to persist chat changes to disk
+                chatState.saveHandler = { [weak self] in
+                    guard let self = self else { return }
+                    await self.saveActiveChat()
+                }
+
+                // Navigate to group chat
+                self.navigationPath.append(GroupChatRoute(group: group, chat: chatFile))
+            } catch {
+                self.chats.error = error
+            }
+        }
+    }
+
+    /// Open an existing group chat (navigates to chat view)
+    func openGroupChat(_ chatFile: ChatFile, for group: CharacterGroup) {
+        configureGroupChat(chatFile, for: group)
+        self.navigationPath.append(GroupChatRoute(group: group, chat: chatFile))
+    }
+
+    /// Configure group chat state without navigating (for use when already in chat view)
+    func configureGroupChat(_ chatFile: ChatFile, for group: CharacterGroup) {
+        // Clear previous chat context
+        closeChat()
+
+        self.activeGroup = group
+        self.activeChatFile = chatFile
+        chats.activeChat = chatFile
+
+        // Configure chat state with the group
+        chatState.configureGroup(
+            chatFile: chatFile,
+            group: group,
+            provider: settings.createProvider(),
+            settings: settings.createPromptSettings(),
+            options: settings.createLLMOptions(),
+            worldInfo: worldInfo.allEntries,
+            extensionPrompts: settings.createExtensionPrompts(),
+            tokenizer: settings.createTokenizer(),
+            model: settings.model,
+            personaName: settings.personaName,
+            personaDescription: settings.personaDescription
+        )
+
+        // Set up save handler to persist chat changes to disk
+        chatState.saveHandler = { [weak self] in
+            guard let self = self else { return }
+            await self.saveActiveChat()
+        }
+    }
+
+    /// Create a new group chat without navigating (for use when already in chat view)
+    func createNewGroupChat(with group: CharacterGroup) async {
+        // Clear previous chat context
+        closeChat()
+
+        self.activeGroup = group
+
+        do {
+            // Create a new chat file (saves to disk immediately)
+            let chatFile = try await chats.createGroupChat(
+                for: group,
+                userName: settings.personaName
+            )
+            self.activeChatFile = chatFile
+            chats.activeChat = chatFile
+
+            // Configure chat state with the group
+            chatState.configureGroup(
+                chatFile: chatFile,
+                group: group,
+                provider: settings.createProvider(),
+                settings: settings.createPromptSettings(),
+                options: settings.createLLMOptions(),
+                worldInfo: worldInfo.allEntries,
+                extensionPrompts: settings.createExtensionPrompts(),
+                tokenizer: settings.createTokenizer(),
+                model: settings.model,
+                personaName: settings.personaName,
+                personaDescription: settings.personaDescription
+            )
+
+            // Set up save handler to persist chat changes to disk
+            chatState.saveHandler = { [weak self] in
+                guard let self = self else { return }
+                await self.saveActiveChat()
+            }
+        } catch {
+            self.chats.error = error
+        }
     }
 }
 
@@ -807,6 +940,17 @@ struct ChatRoute: Hashable {
 
     init(character: CharacterCard, chat: ChatFile? = nil) {
         self.character = character
+        self.chat = chat
+    }
+}
+
+/// Route for navigating to a group chat
+struct GroupChatRoute: Hashable {
+    let group: CharacterGroup
+    let chat: ChatFile?
+
+    init(group: CharacterGroup, chat: ChatFile? = nil) {
+        self.group = group
         self.chat = chat
     }
 }

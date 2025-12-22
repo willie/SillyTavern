@@ -269,6 +269,15 @@ struct GroupDetailView: View {
         .toolbar {
             ToolbarItem(placement: .primaryAction) {
                 Button {
+                    appState.newGroupChat(with: group)
+                } label: {
+                    Label("Start Chat", systemImage: "bubble.left.and.bubble.right")
+                }
+                .disabled(group.enabledMembers.isEmpty)
+            }
+
+            ToolbarItem(placement: .automatic) {
+                Button {
                     isEditing.toggle()
                     if !isEditing {
                         saveGroup()

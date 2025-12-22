@@ -5,11 +5,17 @@ import Observation
 
 /// Manages the state and logic for a single chat session.
 /// Works with ChatFile for persistence matching SillyTavern's JSONL format.
+/// Supports both single-character and group chat modes.
 @Observable @MainActor
 final class ChatState {
     // Current chat file (contains messages)
     var chatFile: ChatFile?
     var character: CharacterCard?
+
+    // Group chat support
+    var group: CharacterGroup?
+    var groupChatState: GroupChatState?
+    var currentSpeaker: CharacterCard?
 
     // Input state
     var inputText: String = ""
@@ -39,6 +45,11 @@ final class ChatState {
     private var model: String = "gpt-4o"
     private var personaName: String = "User"
     private var personaDescription: String = ""
+
+    /// Whether this is a group chat session
+    var isGroupChat: Bool {
+        group != nil
+    }
 
     // MARK: - Computed Properties
 
@@ -72,6 +83,41 @@ final class ChatState {
     ) {
         self.chatFile = chatFile
         self.character = character
+        self.group = nil
+        self.groupChatState = nil
+        self.currentSpeaker = nil
+        self.provider = provider
+        self.promptSettings = settings
+        self.llmOptions = options
+        self.worldInfo = worldInfo
+        self.extensionPrompts = extensionPrompts
+        self.tokenizer = tokenizer
+        self.model = model
+        self.maxContextTokens = settings.maxContextTokens
+        self.personaName = personaName
+        self.personaDescription = personaDescription
+    }
+
+    /// Configure the chat state for a group chat
+    func configureGroup(
+        chatFile: ChatFile,
+        group: CharacterGroup,
+        provider: (any LLMProvider)?,
+        settings: PromptSettings = PromptSettings(),
+        options: LLMOptions = LLMOptions(),
+        worldInfo: [WorldInfoEntry] = [],
+        extensionPrompts: ExtensionPrompts = ExtensionPrompts(),
+        tokenizer: (any Tokenizer)? = nil,
+        model: String = "gpt-4o",
+        personaName: String = "User",
+        personaDescription: String = ""
+    ) {
+        self.chatFile = chatFile
+        self.character = nil
+        self.group = group
+        self.groupChatState = GroupChatState()
+        self.groupChatState?.group = group
+        self.currentSpeaker = nil
         self.provider = provider
         self.promptSettings = settings
         self.llmOptions = options
@@ -100,13 +146,30 @@ final class ChatState {
     func send() async {
         guard !inputText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return }
         guard !isGenerating else { return }
-        guard let chatFile = chatFile, let character = character else {
+        guard let chatFile = chatFile else {
             error = .notConfigured
             return
         }
         guard let provider = provider else {
             error = .notConfigured
             return
+        }
+
+        // Determine the speaker for this turn
+        let speaker: CharacterCard
+        if isGroupChat {
+            guard let nextSpeaker = selectNextGroupSpeaker(for: inputText) else {
+                error = .notConfigured
+                return
+            }
+            speaker = nextSpeaker
+            currentSpeaker = speaker
+        } else {
+            guard let char = character else {
+                error = .notConfigured
+                return
+            }
+            speaker = char
         }
 
         // Add user message
@@ -118,15 +181,41 @@ final class ChatState {
 
         // Run generation in a cancellable task
         generationTask = Task {
-            await generate(chatFile: chatFile, character: character, provider: provider)
+            await generate(chatFile: chatFile, character: speaker, provider: provider)
         }
         await generationTask?.value
+    }
+
+    /// Select the next speaker for a group chat
+    private func selectNextGroupSpeaker(for input: String) -> CharacterCard? {
+        guard let groupChatState = groupChatState else { return nil }
+
+        let lastSpeaker = messages.last.flatMap { $0.is_user ? nil : $0.name }
+        let member = groupChatState.getNextSpeaker(lastMessage: input, lastSpeakerName: lastSpeaker)
+        return member?.character
     }
 
     /// Regenerate the last assistant message
     func regenerate() async {
         guard !isGenerating else { return }
-        guard let chatFile = chatFile, let character = character, let provider = provider else { return }
+        guard let chatFile = chatFile, let provider = provider else { return }
+
+        // Determine the speaker
+        let speaker: CharacterCard
+        if isGroupChat {
+            // In group mode, regenerate with the same speaker or select new one
+            if let current = currentSpeaker {
+                speaker = current
+            } else if let nextSpeaker = selectNextGroupSpeaker(for: "") {
+                speaker = nextSpeaker
+                currentSpeaker = speaker
+            } else {
+                return
+            }
+        } else {
+            guard let char = character else { return }
+            speaker = char
+        }
 
         // Remove last assistant message if present
         if let last = chatFile.messages.last, !last.is_user {
@@ -134,7 +223,7 @@ final class ChatState {
         }
 
         generationTask = Task {
-            await generate(chatFile: chatFile, character: character, provider: provider)
+            await generate(chatFile: chatFile, character: speaker, provider: provider)
         }
         await generationTask?.value
     }
@@ -142,10 +231,23 @@ final class ChatState {
     /// Continue the last assistant message
     func continueGeneration() async {
         guard !isGenerating else { return }
-        guard let chatFile = chatFile, let character = character, let provider = provider else { return }
+        guard let chatFile = chatFile, let provider = provider else { return }
+
+        // Determine the speaker (use current speaker in group mode)
+        let speaker: CharacterCard
+        if isGroupChat {
+            if let current = currentSpeaker {
+                speaker = current
+            } else {
+                return
+            }
+        } else {
+            guard let char = character else { return }
+            speaker = char
+        }
 
         generationTask = Task {
-            await generate(chatFile: chatFile, character: character, provider: provider, type: .continue)
+            await generate(chatFile: chatFile, character: speaker, provider: provider, type: .continue)
         }
         await generationTask?.value
     }
@@ -261,8 +363,21 @@ final class ChatState {
     /// Add a new swipe (regenerate as alternate response)
     func swipe() async {
         guard !isGenerating else { return }
-        guard let chatFile = chatFile, let character = character, let provider = provider else { return }
+        guard let chatFile = chatFile, let provider = provider else { return }
         guard let lastMessage = chatFile.messages.last, !lastMessage.is_user else { return }
+
+        // Determine the speaker (use current speaker or character)
+        let speaker: CharacterCard
+        if isGroupChat {
+            if let current = currentSpeaker {
+                speaker = current
+            } else {
+                return
+            }
+        } else {
+            guard let char = character else { return }
+            speaker = char
+        }
 
         // Initialize swipes array if needed
         if lastMessage.swipes == nil {
@@ -277,7 +392,7 @@ final class ChatState {
 
         do {
             var promptBuilder = PromptBuilder(
-                character: character,
+                character: speaker,
                 settings: promptSettings,
                 worldInfo: worldInfo,
                 extensionPrompts: extensionPrompts
@@ -368,15 +483,16 @@ final class ChatState {
 
     /// Clear all messages and start fresh
     func clearChat() async {
-        guard let chatFile = chatFile, let character = character else { return }
+        guard let chatFile = chatFile else { return }
 
         chatFile.clearMessages()
 
-        // Re-add first message
-        if !character.first_mes.isEmpty {
+        // For single-character chats, re-add first message
+        if !isGroupChat, let character = character, !character.first_mes.isEmpty {
             let firstMessage = substituteParams(character.first_mes)
             chatFile.addCharacterMessage(firstMessage)
         }
+        // For group chats, we start with an empty chat
 
         await saveHandler?()
     }

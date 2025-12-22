@@ -26,6 +26,7 @@ final class FileStore: Sendable {
 
     var charactersDirectory: URL { baseDirectory.appendingPathComponent("characters") }
     var chatsDirectory: URL { baseDirectory.appendingPathComponent("chats") }
+    var groupChatsDirectory: URL { baseDirectory.appendingPathComponent("group chats") }
     var worldInfoDirectory: URL { baseDirectory.appendingPathComponent("worlds") }
     var groupsDirectory: URL { baseDirectory.appendingPathComponent("groups") }
     var settingsFile: URL { baseDirectory.appendingPathComponent("settings.json") }
@@ -38,7 +39,7 @@ final class FileStore: Sendable {
 
     private func ensureDirectoriesExist() {
         let fm = FileManager.default
-        let directories = [charactersDirectory, chatsDirectory, worldInfoDirectory, groupsDirectory]
+        let directories = [charactersDirectory, chatsDirectory, groupChatsDirectory, worldInfoDirectory, groupsDirectory]
         for dir in directories {
             try? fm.createDirectory(at: dir, withIntermediateDirectories: true)
         }
