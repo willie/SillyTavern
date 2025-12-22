@@ -133,6 +133,14 @@ struct ChatListView: View {
                 .disabled(appState.characters.characters.isEmpty)
             }
         }
+        .alert("Error", isPresented: .init(
+            get: { appState.chats.error != nil },
+            set: { if !$0 { appState.chats.error = nil } }
+        )) {
+            Button("OK") { appState.chats.error = nil }
+        } message: {
+            Text(appState.chats.error?.localizedDescription ?? "Unknown error")
+        }
     }
 }
 

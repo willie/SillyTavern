@@ -61,6 +61,14 @@ struct CharacterListView: View {
         } message: {
             Text(importError?.localizedDescription ?? "Unknown error")
         }
+        .alert("Error", isPresented: .init(
+            get: { appState.characters.error != nil },
+            set: { if !$0 { appState.characters.error = nil } }
+        )) {
+            Button("OK") { appState.characters.error = nil }
+        } message: {
+            Text(appState.characters.error?.localizedDescription ?? "Unknown error")
+        }
     }
 
     // MARK: - Character List

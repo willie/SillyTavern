@@ -37,6 +37,14 @@ struct GroupListView: View {
         .sheet(isPresented: $showingNewGroupSheet) {
             newGroupSheet
         }
+        .alert("Error", isPresented: .init(
+            get: { appState.groups.error != nil },
+            set: { if !$0 { appState.groups.error = nil } }
+        )) {
+            Button("OK") { appState.groups.error = nil }
+        } message: {
+            Text(appState.groups.error?.localizedDescription ?? "Unknown error")
+        }
     }
 
     // MARK: - Group List

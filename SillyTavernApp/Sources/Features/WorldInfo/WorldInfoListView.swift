@@ -54,6 +54,14 @@ struct WorldInfoListView: View {
         } message: {
             Text(importError?.localizedDescription ?? "Unknown error")
         }
+        .alert("Error", isPresented: .init(
+            get: { appState.worldInfo.error != nil },
+            set: { if !$0 { appState.worldInfo.error = nil } }
+        )) {
+            Button("OK") { appState.worldInfo.error = nil }
+        } message: {
+            Text(appState.worldInfo.error?.localizedDescription ?? "Unknown error")
+        }
     }
 
     // MARK: - Book List

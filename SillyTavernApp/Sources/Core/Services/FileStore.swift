@@ -490,6 +490,7 @@ enum FileStoreError: Error, LocalizedError {
     case invalidBase64
     case noCharacterData
     case fileNotFound
+    case encodingFailed
 
     var errorDescription: String? {
         switch self {
@@ -505,6 +506,8 @@ enum FileStoreError: Error, LocalizedError {
             return "No character data found in image"
         case .fileNotFound:
             return "File not found"
+        case .encodingFailed:
+            return "Failed to encode data"
         }
     }
 }

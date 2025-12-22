@@ -137,7 +137,7 @@ final class AppState {
                 // Navigate to chat
                 self.navigationPath.append(ChatRoute(character: character))
             } catch {
-                print("Failed to create chat: \(error)")
+                self.chats.error = error
             }
         }
     }
@@ -285,18 +285,26 @@ final class CharacterStore {
 
     func add(_ character: CharacterCard) {
         Task {
-            let data = try character.toData(prettyPrinted: true)
-            let savedURL = try fileStore.saveCharacter(data: data, name: character.name, existingURL: character.fileURL)
-            character.fileURL = savedURL
-            // FolderMonitor will trigger load() to refresh characters
+            do {
+                let data = try character.toData(prettyPrinted: true)
+                let savedURL = try fileStore.saveCharacter(data: data, name: character.name, existingURL: character.fileURL)
+                character.fileURL = savedURL
+                // FolderMonitor will trigger load() to refresh characters
+            } catch {
+                self.error = error
+            }
         }
     }
 
     func remove(_ character: CharacterCard) {
         Task {
-            guard let url = character.fileURL else { return }
-            try? fileStore.deleteCharacter(at: url)
-            // FolderMonitor will trigger load() to refresh characters
+            do {
+                guard let url = character.fileURL else { return }
+                try fileStore.deleteCharacter(at: url)
+                // FolderMonitor will trigger load() to refresh characters
+            } catch {
+                self.error = error
+            }
         }
     }
 
@@ -618,7 +626,7 @@ final class WorldInfoStore {
             let encoder = JSONEncoder()
             encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
             guard case .object(let dict) = jsonValue else {
-                print("Failed to encode world info book: invalid JSON")
+                self.error = FileStoreError.encodingFailed
                 return
             }
             let data = try encoder.encode(dict)
@@ -628,7 +636,7 @@ final class WorldInfoStore {
             book.fileURL = savedURL
             // FolderMonitor will trigger load() to refresh books
         } catch {
-            print("Failed to save world info book: \(error)")
+            self.error = error
         }
     }
 
@@ -639,7 +647,7 @@ final class WorldInfoStore {
             try fileStore.deleteWorldInfoBook(at: url)
             // FolderMonitor will trigger load() to refresh books
         } catch {
-            print("Failed to delete world info book: \(error)")
+            self.error = error
         }
     }
 
@@ -712,7 +720,7 @@ final class GroupStore {
             group.fileURL = savedURL
             // FolderMonitor will trigger load() to refresh groups
         } catch {
-            print("Failed to save group: \(error)")
+            self.error = error
         }
     }
 
@@ -723,7 +731,7 @@ final class GroupStore {
             try fileStore.deleteGroup(at: url)
             // FolderMonitor will trigger load() to refresh groups
         } catch {
-            print("Failed to delete group: \(error)")
+            self.error = error
         }
     }
 
