@@ -336,7 +336,8 @@ struct GroupDetailView: View {
                     GroupMemberRow(
                         member: member,
                         group: group,
-                        isEditing: isEditing
+                        isEditing: isEditing,
+                        onSave: saveGroup
                     )
                 }
                 .onDelete(perform: deleteMembers)
@@ -387,6 +388,7 @@ struct GroupMemberRow: View {
     let member: GroupMember
     let group: CharacterGroup
     let isEditing: Bool
+    var onSave: (() -> Void)?
 
     var isEnabled: Bool {
         !group.disabledMembers.contains(member.id)
@@ -438,6 +440,7 @@ struct GroupMemberRow: View {
                 // Toggle enabled
                 Button {
                     group.toggleMember(member)
+                    onSave?()
                 } label: {
                     Image(systemName: isEnabled ? "eye" : "eye.slash")
                         .foregroundStyle(isEnabled ? .green : .secondary)
@@ -449,12 +452,14 @@ struct GroupMemberRow: View {
         .contextMenu {
             Button {
                 group.toggleMember(member)
+                onSave?()
             } label: {
                 Label(isEnabled ? "Disable" : "Enable", systemImage: isEnabled ? "eye.slash" : "eye")
             }
 
             Button {
                 group.toggleFavorite(member)
+                onSave?()
             } label: {
                 Label(isFavorite ? "Unfavorite" : "Favorite", systemImage: isFavorite ? "star.slash" : "star")
             }
@@ -463,6 +468,7 @@ struct GroupMemberRow: View {
 
             Button(role: .destructive) {
                 group.removeMember(member)
+                onSave?()
             } label: {
                 Label("Remove", systemImage: "trash")
             }
@@ -481,8 +487,17 @@ struct AddMemberSheet: View {
     var availableCharacters: [CharacterCard] {
         let existingIDs = Set(group.members.map { $0.characterID })
         return appState.characters.characters.filter { char in
-            !existingIDs.contains(char.avatar) && !existingIDs.contains(char.name)
+            !existingIDs.contains(stableID(for: char))
         }
+    }
+
+    /// Returns a stable unique identifier for a character
+    private func stableID(for character: CharacterCard) -> String {
+        // Use avatar if it's a valid unique identifier, otherwise use name
+        if !character.avatar.isEmpty && character.avatar != "none" {
+            return character.avatar
+        }
+        return character.name
     }
 
     var filteredCharacters: [CharacterCard] {
@@ -539,7 +554,7 @@ struct AddMemberSheet: View {
     }
 
     private func addMember(_ character: CharacterCard) {
-        let member = GroupMember(characterID: character.avatar, character: character)
+        let member = GroupMember(characterID: stableID(for: character), character: character)
         group.addMember(member)
     }
 }

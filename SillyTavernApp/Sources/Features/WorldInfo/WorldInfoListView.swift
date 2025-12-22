@@ -387,12 +387,14 @@ struct WorldInfoBookDetailView: View {
     private func entryContextMenu(for entry: WorldInfoEntry) -> some View {
         Button {
             entry.enabled.toggle()
+            saveBook()
         } label: {
             Label(entry.enabled ? "Disable" : "Enable", systemImage: entry.enabled ? "eye.slash" : "eye")
         }
 
         Button {
             duplicateEntry(entry)
+            saveBook()
         } label: {
             Label("Duplicate", systemImage: "doc.on.doc")
         }
@@ -401,6 +403,7 @@ struct WorldInfoBookDetailView: View {
 
         Button(role: .destructive) {
             book.entries.removeAll { $0.id == entry.id }
+            saveBook()
         } label: {
             Label("Delete", systemImage: "trash")
         }

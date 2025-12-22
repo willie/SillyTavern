@@ -115,7 +115,7 @@ struct AppCommands: Commands {
             Divider()
 
             Button("Stop Generation") {
-                // Would need cancellation support in ChatState
+                appState.chatState.stopGeneration()
             }
             .keyboardShortcut(.escape, modifiers: [])
             .disabled(!appState.chatState.isGenerating)
