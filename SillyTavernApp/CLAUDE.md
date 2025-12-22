@@ -124,6 +124,41 @@ protocol LLMProvider: Sendable {
 ### LLM Options
 Sampling parameters: `maxTokens`, `temperature`, `topP`, `topK`, `minP`, `frequencyPenalty`, `presencePenalty`, `repetitionPenalty`, `seed`, `stopSequences`
 
+### Error Handling
+Stores have `error: Error?` properties. Views display errors via alert bindings:
+```swift
+.alert("Error", isPresented: .init(
+    get: { appState.characters.error != nil },
+    set: { if !$0 { appState.characters.error = nil } }
+)) {
+    Button("OK") { appState.characters.error = nil }
+} message: {
+    Text(appState.characters.error?.localizedDescription ?? "Unknown error")
+}
+```
+
+### Settings Persistence
+Use `UserDefaults` via `didSet` in SettingsStore. **Never use `@AppStorage`** - it conflicts with `@Observable` and creates dual state.
+```swift
+var temperature: Double = 0.7 {
+    didSet { defaults.set(temperature, forKey: "settings.temperature") }
+}
+```
+
+### FileStore I/O
+FileStore methods are `nonisolated` for background I/O. Pass primitive data, not model objects:
+```swift
+// Caller encodes, FileStore just writes
+let data = try character.toData(prettyPrinted: true)
+let savedURL = try fileStore.saveCharacter(data: data, name: character.name, existingURL: character.fileURL)
+```
+
+### FolderMonitor Debouncing
+FolderMonitor debounces callbacks (200ms default) to coalesce rapid file events:
+```swift
+monitor = FolderMonitor(url: directory, debounceInterval: .milliseconds(200)) { ... }
+```
+
 ## Key Files for Common Tasks
 
 | Task | Files |
