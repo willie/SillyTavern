@@ -95,15 +95,56 @@ struct SidebarView: View {
     }
 }
 
+/// Represents either a character chat or a group chat for unified display
+enum ChatItem: Identifiable {
+    case character(chat: ChatFile, character: CharacterCard)
+    case group(chat: ChatFile, group: CharacterGroup)
+
+    var id: UUID { chat.id }
+
+    var chat: ChatFile {
+        switch self {
+        case .character(let chat, _): return chat
+        case .group(let chat, _): return chat
+        }
+    }
+
+    var name: String {
+        switch self {
+        case .character(_, let character): return character.name
+        case .group(_, let group): return group.name
+        }
+    }
+
+    var isGroup: Bool {
+        if case .group = self { return true }
+        return false
+    }
+}
+
 struct ChatListView: View {
     @Environment(AppState.self) private var appState
 
-    /// All chats paired with their characters, sorted by most recent
-    private var allChats: [(chat: ChatFile, character: CharacterCard)] {
-        appState.characters.characters.flatMap { character in
-            appState.chats.chats(for: character).map { (chat: $0, character: character) }
+    /// All chats (character and group), sorted by most recent
+    private var allChats: [ChatItem] {
+        var items: [ChatItem] = []
+
+        // Add character chats
+        for character in appState.characters.characters {
+            for chat in appState.chats.chats(for: character) {
+                items.append(.character(chat: chat, character: character))
+            }
         }
-        .sorted { ($0.chat.lastModified ?? .distantPast) > ($1.chat.lastModified ?? .distantPast) }
+
+        // Add group chats
+        for group in appState.groups.groups {
+            for chat in appState.chats.chats(for: group) {
+                items.append(.group(chat: chat, group: group))
+            }
+        }
+
+        // Sort by most recent
+        return items.sorted { ($0.chat.lastModified ?? .distantPast) > ($1.chat.lastModified ?? .distantPast) }
     }
 
     var body: some View {
@@ -112,12 +153,19 @@ struct ChatListView: View {
                 ContentUnavailableView {
                     Label("No Chats", systemImage: "bubble.left.and.bubble.right")
                 } description: {
-                    Text("Start a chat with a character")
+                    Text("Start a chat with a character or group")
                 }
             } else {
-                ForEach(allChats, id: \.chat.id) { item in
-                    NavigationLink(value: ChatRoute(character: item.character, chat: item.chat)) {
-                        ChatRowView(chat: item.chat, character: item.character)
+                ForEach(allChats) { item in
+                    switch item {
+                    case .character(let chat, let character):
+                        NavigationLink(value: ChatRoute(character: character, chat: chat)) {
+                            ChatRowView(chat: chat, character: character)
+                        }
+                    case .group(let chat, let group):
+                        NavigationLink(value: GroupChatRoute(group: group, chat: chat)) {
+                            GroupChatRowView(chat: chat, group: group)
+                        }
                     }
                 }
             }
@@ -126,15 +174,25 @@ struct ChatListView: View {
         .toolbar {
             ToolbarItem(placement: .primaryAction) {
                 Menu {
-                    ForEach(appState.characters.characters) { character in
-                        Button(character.name) {
-                            appState.newChat(with: character)
+                    Section("Characters") {
+                        ForEach(appState.characters.characters) { character in
+                            Button(character.name) {
+                                appState.newChat(with: character)
+                            }
+                        }
+                    }
+                    Section("Groups") {
+                        ForEach(appState.groups.groups) { group in
+                            Button(group.name) {
+                                appState.newGroupChat(with: group)
+                            }
+                            .disabled(group.enabledMembers.isEmpty)
                         }
                     }
                 } label: {
                     Image(systemName: "plus")
                 }
-                .disabled(appState.characters.characters.isEmpty)
+                .disabled(appState.characters.characters.isEmpty && appState.groups.groups.isEmpty)
             }
         }
         .alert("Error", isPresented: .init(
@@ -171,6 +229,69 @@ struct ChatRowView: View {
                 Text(character.name)
                     .font(.headline)
                     .lineLimit(1)
+
+                HStack(spacing: 8) {
+                    Text(chat.fileName)
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                        .lineLimit(1)
+
+                    Text("•")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+
+                    Text("\(chat.messages.count) messages")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+            }
+
+            Spacer()
+
+            // Last modified
+            if let lastModified = chat.lastModified {
+                Text(lastModified, style: .relative)
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+        }
+        .padding(.vertical, 4)
+    }
+}
+
+// MARK: - Group Chat Row View
+
+struct GroupChatRowView: View {
+    let chat: ChatFile
+    let group: CharacterGroup
+
+    var body: some View {
+        HStack(spacing: 12) {
+            // Group icon
+            Circle()
+                .fill(Color.purple.opacity(0.2))
+                .frame(width: 40, height: 40)
+                .overlay {
+                    Image(systemName: "person.3")
+                        .font(.caption)
+                        .foregroundStyle(Color.purple)
+                }
+
+            // Chat info
+            VStack(alignment: .leading, spacing: 4) {
+                HStack(spacing: 6) {
+                    Text(group.name.isEmpty ? "Untitled Group" : group.name)
+                        .font(.headline)
+                        .lineLimit(1)
+
+                    Text("Group")
+                        .font(.caption2)
+                        .padding(.horizontal, 6)
+                        .padding(.vertical, 2)
+                        .background(Color.purple.opacity(0.15))
+                        .foregroundColor(.purple)
+                        .clipShape(Capsule())
+                }
 
                 HStack(spacing: 8) {
                     Text(chat.fileName)

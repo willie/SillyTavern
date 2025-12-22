@@ -47,7 +47,14 @@ final class CharacterGroup: Identifiable, Hashable {
     }
 
     convenience init(fromJSON json: [String: JSONValue], url: URL? = nil) {
-        self.init()
+        // Load ID from JSON if present, otherwise generate new one
+        let id: UUID
+        if let idString = json["id"]?.string, let uuid = UUID(uuidString: idString) {
+            id = uuid
+        } else {
+            id = UUID()
+        }
+        self.init(id: id)
         self.rawJSON = json
         self.fileURL = url
         load(from: json)
@@ -113,6 +120,7 @@ final class CharacterGroup: Identifiable, Hashable {
     func toJSON() -> [String: JSONValue] {
         var json = rawJSON
 
+        json["id"] = .string(id.uuidString)  // Persist ID for stable chat directory
         json["name"] = .string(name)
         json["members"] = .array(members.map { .string($0.characterID) })
         json["activation_strategy"] = .number(Double(activationStrategy.rawValue))

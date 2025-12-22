@@ -99,7 +99,7 @@ struct PromptSettings: Sendable {
 
     // Special prompts
     var impersonationPrompt: String = ""
-    var groupNudgePrompt: String = ""
+    var groupNudgePrompt: String = "[Write the next reply only as {{char}}.]"
     var continueNudgePrompt: String = ""
 
     // Token limits

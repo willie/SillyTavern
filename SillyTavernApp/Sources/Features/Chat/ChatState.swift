@@ -295,6 +295,7 @@ final class ChatState {
             let builtPrompt = promptBuilder.build(
                 chatHistory: historyMessages,
                 type: type,
+                isGroupChat: isGroupChat,
                 tokenCounter: tokenCounter
             )
 
@@ -419,6 +420,7 @@ final class ChatState {
             let builtPrompt = promptBuilder.build(
                 chatHistory: Array(historyMessages),
                 type: .normal,
+                isGroupChat: isGroupChat,
                 tokenCounter: tokenCounter
             )
 
