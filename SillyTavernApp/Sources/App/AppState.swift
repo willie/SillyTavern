@@ -918,7 +918,8 @@ final class GroupStore {
     func save(_ group: CharacterGroup) async {
         do {
             let data = try group.toData(prettyPrinted: true)
-            let savedURL = try fileStore.saveGroup(data: data, name: group.name, existingURL: group.fileURL)
+            // SillyTavern stores groups as <id>.json
+            let savedURL = try fileStore.saveGroup(data: data, id: group.id, existingURL: group.fileURL)
             group.fileURL = savedURL
             // FolderMonitor will trigger load() to refresh groups
         } catch {

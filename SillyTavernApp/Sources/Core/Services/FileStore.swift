@@ -228,11 +228,12 @@ final class FileStore: Sendable {
     /// Save group data to disk
     /// - Parameters:
     ///   - data: The encoded group data
-    ///   - name: Group name for filename
+    ///   - id: Group ID for filename (SillyTavern uses <id>.json)
     ///   - existingURL: Existing file URL if updating
     /// - Returns: The URL where the file was saved
-    nonisolated func saveGroup(data: Data, name: String, existingURL: URL?) throws -> URL {
-        let filename = sanitizeFilename(name.isEmpty ? "Untitled" : name) + ".json"
+    nonisolated func saveGroup(data: Data, id: String, existingURL: URL?) throws -> URL {
+        // SillyTavern stores groups as <id>.json (see groups.js)
+        let filename = sanitizeFilename(id) + ".json"
         let url = existingURL ?? groupsDirectory.appendingPathComponent(filename)
         try data.write(to: url)
         return url
