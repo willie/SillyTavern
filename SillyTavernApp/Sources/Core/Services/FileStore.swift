@@ -99,12 +99,33 @@ final class FileStore: Sendable {
 
     /// Save character data to disk
     /// - Parameters:
-    ///   - data: The encoded character data
+    ///   - data: The encoded character JSON data
     ///   - name: Character name for filename
     ///   - existingURL: Existing file URL if updating
+    ///   - originalPNGData: Original PNG data if character was loaded from PNG (for re-embedding)
     /// - Returns: The URL where the file was saved
-    nonisolated func saveCharacter(data: Data, name: String, existingURL: URL?) throws -> URL {
-        let url = existingURL ?? charactersDirectory.appendingPathComponent("\(name).json")
+    nonisolated func saveCharacter(data: Data, name: String, existingURL: URL?, originalPNGData: Data? = nil) throws -> URL {
+        // If existing file is PNG, embed JSON in PNG metadata
+        if let existingURL = existingURL, existingURL.pathExtension.lowercased() == "png" {
+            guard let jsonString = String(data: data, encoding: .utf8) else {
+                throw FileStoreError.encodingFailed
+            }
+
+            // Use original PNG data if available, otherwise read from disk
+            let pngData: Data
+            if let original = originalPNGData {
+                pngData = original
+            } else {
+                pngData = try Data(contentsOf: existingURL)
+            }
+
+            let updatedPNG = try PNGMetadataReader.writeCharacterData(pngData, characterJSON: jsonString)
+            try updatedPNG.write(to: existingURL)
+            return existingURL
+        }
+
+        // For JSON files or new characters, write JSON directly
+        let url = existingURL ?? charactersDirectory.appendingPathComponent("\(sanitizeFilename(name)).json")
         try data.write(to: url)
         return url
     }

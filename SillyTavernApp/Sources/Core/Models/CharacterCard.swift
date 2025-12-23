@@ -253,6 +253,9 @@ struct DepthPrompt: Codable, Equatable, Sendable {
 
 // MARK: - World Info Book (Embedded Lorebook)
 
+/// World info book that handles both formats:
+/// - Standalone world info files: entries as object keyed by uid
+/// - V2 character_book: entries as array with id field
 @Observable
 final class WorldInfoBook: Identifiable, Hashable {
     let id: UUID
@@ -261,6 +264,8 @@ final class WorldInfoBook: Identifiable, Hashable {
     var fileURL: URL?
 
     private var rawJSON: [String: JSONValue] = [:]
+    /// Whether entries were originally an array (V2 character_book format)
+    private var isArrayFormat: Bool = false
 
     init(id: UUID = UUID(), fileURL: URL? = nil) {
         self.id = id
@@ -280,10 +285,24 @@ final class WorldInfoBook: Identifiable, Hashable {
         self.rawJSON = json
         self.name = json["name"]?.string ?? ""
 
-        if let entriesJSON = json["entries"]?.object {
+        // Handle both array format (V2 character_book) and object format (ST world info)
+        if let entriesArray = json["entries"]?.array {
+            // V2 character_book format: entries is an array
+            self.isArrayFormat = true
+            self.entries = entriesArray.enumerated().compactMap { index, value in
+                guard let entryObj = value.object else { return nil }
+                // V2 uses "id" field, fall back to index
+                let uid = entryObj["id"]?.string
+                    ?? entryObj["id"]?.int.map(String.init)
+                    ?? String(index)
+                return WorldInfoEntry(from: entryObj, uid: uid, isV2Format: true)
+            }
+        } else if let entriesJSON = json["entries"]?.object {
+            // ST world info format: entries is an object keyed by uid
+            self.isArrayFormat = false
             self.entries = entriesJSON.compactMap { key, value in
                 guard let entryObj = value.object else { return nil }
-                return WorldInfoEntry(from: entryObj, uid: key)
+                return WorldInfoEntry(from: entryObj, uid: key, isV2Format: false)
             }
         }
     }
@@ -292,11 +311,17 @@ final class WorldInfoBook: Identifiable, Hashable {
         var json = rawJSON
         json["name"] = .string(name)
 
-        var entriesObj: [String: JSONValue] = [:]
-        for entry in entries {
-            entriesObj[entry.uid] = entry.toJSON()
+        if isArrayFormat {
+            // V2 character_book format: entries as array
+            json["entries"] = .array(entries.map { $0.toJSON() })
+        } else {
+            // ST world info format: entries as object keyed by uid
+            var entriesObj: [String: JSONValue] = [:]
+            for entry in entries {
+                entriesObj[entry.uid] = entry.toJSON()
+            }
+            json["entries"] = .object(entriesObj)
         }
-        json["entries"] = .object(entriesObj)
 
         return .object(json)
     }
@@ -304,6 +329,9 @@ final class WorldInfoBook: Identifiable, Hashable {
 
 // MARK: - World Info Entry
 
+/// World info entry that handles both formats:
+/// - ST internal: key, keysecondary, disable (inverted), order
+/// - V2 spec: keys, secondary_keys, enabled, insertion_order, id
 @Observable
 final class WorldInfoEntry: Identifiable {
     let id: UUID
@@ -336,28 +364,48 @@ final class WorldInfoEntry: Identifiable {
     var probability: Int = 100
 
     private var rawJSON: [String: JSONValue] = [:]
+    /// Whether this entry uses V2 spec field names
+    private var isV2Format: Bool = false
 
     init(id: UUID = UUID(), uid: String = "") {
         self.id = id
         self.uid = uid.isEmpty ? "\(Int(Date().timeIntervalSince1970 * 1000))" : uid
     }
 
-    convenience init(from json: [String: JSONValue], uid: String) {
+    convenience init(from json: [String: JSONValue], uid: String, isV2Format: Bool = false) {
         self.init(uid: uid)
         self.rawJSON = json
+        self.isV2Format = isV2Format
 
-        self.keys = json["key"]?.array?.compactMap(\.string) ?? []
-        self.secondary_keys = json["keysecondary"]?.array?.compactMap(\.string) ?? []
+        if isV2Format {
+            // V2 character_book format
+            self.keys = json["keys"]?.array?.compactMap(\.string) ?? []
+            self.secondary_keys = json["secondary_keys"]?.array?.compactMap(\.string) ?? []
+            self.enabled = json["enabled"]?.bool ?? true
+            self.order = json["insertion_order"]?.int ?? 100
+            // V2 position is a string like "before_char", "after_char"
+            if let posStr = json["position"]?.string {
+                self.position = posStr == "after_char" ? 1 : 0
+            } else {
+                self.position = json["position"]?.int ?? 0
+            }
+        } else {
+            // ST internal format
+            self.keys = json["key"]?.array?.compactMap(\.string) ?? []
+            self.secondary_keys = json["keysecondary"]?.array?.compactMap(\.string) ?? []
+            self.enabled = json["disable"]?.bool != true  // Note: inverted
+            self.order = json["order"]?.int ?? 100
+            self.position = json["position"]?.int ?? 0
+        }
+
+        // Common fields (same in both formats)
         self.content = json["content"]?.string ?? ""
         self.comment = json["comment"]?.string ?? ""
-        self.enabled = json["disable"]?.bool != true  // Note: inverted
         self.selective = json["selective"]?.bool ?? false
         self.constant = json["constant"]?.bool ?? false
-        self.case_sensitive = json["caseSensitive"]?.bool ?? false
-        self.match_whole_words = json["matchWholeWords"]?.bool ?? false
-        self.position = json["position"]?.int ?? 0
+        self.case_sensitive = json["caseSensitive"]?.bool ?? json["case_sensitive"]?.bool ?? false
+        self.match_whole_words = json["matchWholeWords"]?.bool ?? json["match_whole_words"]?.bool ?? false
         self.depth = json["depth"]?.int ?? 4
-        self.order = json["order"]?.int ?? 100
         self.sticky = json["sticky"]?.int ?? 0
         self.cooldown = json["cooldown"]?.int ?? 0
         self.delay = json["delay"]?.int ?? 0
@@ -367,18 +415,33 @@ final class WorldInfoEntry: Identifiable {
     func toJSON() -> JSONValue {
         var json = rawJSON
 
-        json["key"] = .array(keys.map { .string($0) })
-        json["keysecondary"] = .array(secondary_keys.map { .string($0) })
+        if isV2Format {
+            // V2 character_book format
+            json["id"] = .string(uid)
+            json["keys"] = .array(keys.map { .string($0) })
+            json["secondary_keys"] = .array(secondary_keys.map { .string($0) })
+            json["enabled"] = .bool(enabled)
+            json["insertion_order"] = .number(Double(order))
+            json["position"] = .string(position == 0 ? "before_char" : "after_char")
+            json["case_sensitive"] = .bool(case_sensitive)
+            json["match_whole_words"] = .bool(match_whole_words)
+        } else {
+            // ST internal format
+            json["key"] = .array(keys.map { .string($0) })
+            json["keysecondary"] = .array(secondary_keys.map { .string($0) })
+            json["disable"] = .bool(!enabled)  // Note: inverted
+            json["order"] = .number(Double(order))
+            json["position"] = .number(Double(position))
+            json["caseSensitive"] = .bool(case_sensitive)
+            json["matchWholeWords"] = .bool(match_whole_words)
+        }
+
+        // Common fields
         json["content"] = .string(content)
         json["comment"] = .string(comment)
-        json["disable"] = .bool(!enabled)  // Note: inverted
         json["selective"] = .bool(selective)
         json["constant"] = .bool(constant)
-        json["caseSensitive"] = .bool(case_sensitive)
-        json["matchWholeWords"] = .bool(match_whole_words)
-        json["position"] = .number(Double(position))
         json["depth"] = .number(Double(depth))
-        json["order"] = .number(Double(order))
         json["sticky"] = .number(Double(sticky))
         json["cooldown"] = .number(Double(cooldown))
         json["delay"] = .number(Double(delay))

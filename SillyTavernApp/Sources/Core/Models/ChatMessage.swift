@@ -128,7 +128,17 @@ final class ChatMessage: Identifiable, Hashable, Codable {
         self.id = UUID()
         self.name = try container.decode(String.self, forKey: .name)
         self.is_user = try container.decode(Bool.self, forKey: .is_user)
-        self.send_date = try container.decode(String.self, forKey: .send_date)
+
+        // Handle send_date as either string or number (SillyTavern can use both)
+        if let dateString = try? container.decode(String.self, forKey: .send_date) {
+            self.send_date = dateString
+        } else if let dateNumber = try? container.decode(Double.self, forKey: .send_date) {
+            // Convert numeric timestamp to string (milliseconds since epoch)
+            self.send_date = String(Int(dateNumber))
+        } else {
+            self.send_date = Self.currentTimestamp()
+        }
+
         self.mes = try container.decode(String.self, forKey: .mes)
         self.swipes = try container.decodeIfPresent([String].self, forKey: .swipes)
         self.swipe_id = try container.decodeIfPresent(Int.self, forKey: .swipe_id)
@@ -158,36 +168,92 @@ final class ChatMessage: Identifiable, Hashable, Codable {
 
 // MARK: - Message Extra (additional metadata)
 
+/// Additional message metadata. Uses raw JSON storage to preserve all fields during round-trip.
 struct MessageExtra: Codable, Equatable {
+    /// Raw JSON storage for preserving all fields
+    private var rawJSON: [String: JSONValue]
+
+    // MARK: - Common Accessors
+
     /// API used for generation (e.g., "openai", "anthropic")
-    var api: String?
+    var api: String? {
+        get { rawJSON["api"]?.string }
+        set { rawJSON["api"] = newValue.map { .string($0) } }
+    }
 
     /// Model used for generation
-    var model: String?
+    var model: String? {
+        get { rawJSON["model"]?.string }
+        set { rawJSON["model"] = newValue.map { .string($0) } }
+    }
 
     /// Message type (e.g., "narrator", "comment")
-    var type: String?
+    var type: String? {
+        get { rawJSON["type"]?.string }
+        set { rawJSON["type"] = newValue.map { .string($0) } }
+    }
 
     /// Custom display text (rendered differently from mes)
-    var display_text: String?
+    var display_text: String? {
+        get { rawJSON["display_text"]?.string }
+        set { rawJSON["display_text"] = newValue.map { .string($0) } }
+    }
 
     /// Character bias injected
-    var bias: String?
-
-    /// Media attachments (images, etc.)
-    var media: [MediaAttachment]?
-
-    /// File attachments
-    var files: [FileAttachment]?
+    var bias: String? {
+        get { rawJSON["bias"]?.string }
+        set { rawJSON["bias"] = newValue.map { .string($0) } }
+    }
 
     /// Whether this is a system/hidden message
-    var is_system: Bool?
+    var is_system: Bool? {
+        get { rawJSON["is_system"]?.bool }
+        set { rawJSON["is_system"] = newValue.map { .bool($0) } }
+    }
 
-    /// Token logprobs (if available)
-    var token_count: Int?
+    /// Token count (if available)
+    var token_count: Int? {
+        get { rawJSON["token_count"]?.int }
+        set { rawJSON["token_count"] = newValue.map { .number(Double($0)) } }
+    }
 
     /// Generation time in milliseconds
-    var gen_time: Int?
+    var gen_time: Int? {
+        get { rawJSON["gen_time"]?.int }
+        set { rawJSON["gen_time"] = newValue.map { .number(Double($0)) } }
+    }
+
+    // MARK: - Generic Access
+
+    /// Get any value by key
+    subscript(key: String) -> JSONValue? {
+        get { rawJSON[key] }
+        set { rawJSON[key] = newValue }
+    }
+
+    // MARK: - Initialization
+
+    init() {
+        self.rawJSON = [:]
+    }
+
+    // MARK: - Codable
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.singleValueContainer()
+        self.rawJSON = try container.decode([String: JSONValue].self)
+    }
+
+    func encode(to encoder: Encoder) throws {
+        var container = encoder.singleValueContainer()
+        try container.encode(rawJSON)
+    }
+
+    // MARK: - Equatable
+
+    static func == (lhs: MessageExtra, rhs: MessageExtra) -> Bool {
+        lhs.rawJSON == rhs.rawJSON
+    }
 }
 
 // MARK: - Media Attachment

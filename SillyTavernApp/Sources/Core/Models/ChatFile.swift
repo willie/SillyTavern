@@ -223,23 +223,87 @@ struct ChatFileMetadata: Codable {
 
 // MARK: - Chat Metadata
 
-/// Additional metadata stored in chat_metadata field
+/// Additional metadata stored in chat_metadata field.
+/// Uses raw JSON storage to preserve all fields (scenario, system overrides, timed world info, etc.)
 struct ChatMetadata: Codable, Equatable {
+    /// Raw JSON storage for preserving all fields during round-trip
+    private var rawJSON: [String: JSONValue]
+
+    // MARK: - Common Accessors
+
     /// Integrity hash for verification
-    var integrity: String?
+    var integrity: String? {
+        get { rawJSON["integrity"]?.string }
+        set {
+            if let value = newValue {
+                rawJSON["integrity"] = .string(value)
+            } else {
+                rawJSON.removeValue(forKey: "integrity")
+            }
+        }
+    }
 
     /// Custom notes about this chat
-    var note: String?
+    var note: String? {
+        get { rawJSON["note"]?.string }
+        set {
+            if let value = newValue {
+                rawJSON["note"] = .string(value)
+            } else {
+                rawJSON.removeValue(forKey: "note")
+            }
+        }
+    }
 
     /// World info books enabled for this chat
-    var world_info: [String]?
+    var world_info: [String]? {
+        get { rawJSON["world_info"]?.array?.compactMap(\.string) }
+        set {
+            if let value = newValue {
+                rawJSON["world_info"] = .array(value.map { .string($0) })
+            } else {
+                rawJSON.removeValue(forKey: "world_info")
+            }
+        }
+    }
 
-    /// Any other custom data
-    var custom: [String: String]?
+    // MARK: - Generic Access
+
+    /// Get any value by key
+    subscript(key: String) -> JSONValue? {
+        get { rawJSON[key] }
+        set { rawJSON[key] = newValue }
+    }
+
+    // MARK: - Initialization
 
     init(integrity: String? = nil, note: String? = nil) {
-        self.integrity = integrity
-        self.note = note
+        self.rawJSON = [:]
+        if let integrity = integrity {
+            self.rawJSON["integrity"] = .string(integrity)
+        }
+        if let note = note {
+            self.rawJSON["note"] = .string(note)
+        }
+    }
+
+    // MARK: - Codable
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.singleValueContainer()
+        self.rawJSON = try container.decode([String: JSONValue].self)
+    }
+
+    func encode(to encoder: Encoder) throws {
+        var container = encoder.singleValueContainer()
+        try container.encode(rawJSON)
+    }
+
+    // MARK: - Equatable
+
+    static func == (lhs: ChatMetadata, rhs: ChatMetadata) -> Bool {
+        // Compare JSON representations
+        lhs.rawJSON == rhs.rawJSON
     }
 }
 
