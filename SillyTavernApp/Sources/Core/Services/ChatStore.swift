@@ -328,6 +328,9 @@ final class ChatStore {
         let fileURL = groupChatsDirectory.appendingPathComponent("\(chatID).jsonl")
         try chat.save(to: fileURL)
 
+        // Set fileURL so subsequent saves use the same path
+        chat.fileURL = fileURL
+
         // Update group's chat list
         group.chats.append(chatID)
         group.chatID = chatID
@@ -364,11 +367,24 @@ final class ChatStore {
     }
 
     /// Delete a chat for a group
+    /// Note: Caller should save the group after this to persist the updated chats array
     func delete(_ chat: ChatFile, for group: CharacterGroup) async throws {
         guard let fileURL = chat.fileURL else { return }
 
+        // Get chat ID from filename
+        let chatID = fileURL.deletingPathExtension().lastPathComponent
+
+        // Remove from group's chat list
+        group.chats.removeAll { $0 == chatID }
+
+        // Clear active chat if it was the deleted one
+        if group.chatID == chatID {
+            group.chatID = group.chats.last
+        }
+
         try fileManager.removeItem(at: fileURL)
         // FolderMonitor will trigger loadAll() to refresh allGroupChats
+        // Caller should save the group to persist the updated chats array
     }
 
     // MARK: - Migration
