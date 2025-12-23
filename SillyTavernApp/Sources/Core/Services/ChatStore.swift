@@ -5,14 +5,14 @@ import Observation
 
 /// Manages chat persistence matching SillyTavern's file structure.
 /// Chats are stored as JSONL files in `chats/<character_avatar>/` directories.
-/// Group chats are stored in `group chats/<group_id>/` directories.
+/// Group chats are stored flat in `group chats/` (SillyTavern compatible).
 @Observable @MainActor
 final class ChatStore {
     /// All loaded chats, keyed by character avatar name
     private(set) var chatsByCharacter: [String: [ChatFile]] = [:]
 
-    /// All loaded group chats, keyed by group ID
-    private(set) var chatsByGroup: [String: [ChatFile]] = [:]
+    /// All loaded group chats, keyed by chat filename (flat structure like SillyTavern)
+    private(set) var allGroupChats: [String: ChatFile] = [:]
 
     /// Currently active chat
     var activeChat: ChatFile?
@@ -44,10 +44,6 @@ final class ChatStore {
         return chatsDirectory.appendingPathComponent(avatarName, isDirectory: true)
     }
 
-    /// Get the chat directory for a group (based on group ID)
-    func chatDirectory(for group: CharacterGroup) -> URL {
-        groupChatsDirectory.appendingPathComponent(group.id.uuidString, isDirectory: true)
-    }
 
     /// Convert character to directory name (matches SillyTavern's approach)
     private func characterDirectoryName(for character: CharacterCard) -> String {
@@ -122,28 +118,27 @@ final class ChatStore {
 
             chatsByCharacter = loadedCharacterChats
 
-            // Load group chats
+            // Load group chats (flat structure - all .jsonl files directly in group chats/)
             let groupContents = try fileManager.contentsOfDirectory(
                 at: groupChatsDirectory,
-                includingPropertiesForKeys: [.isDirectoryKey],
+                includingPropertiesForKeys: [.contentModificationDateKey],
                 options: [.skipsHiddenFiles]
             )
 
-            var loadedGroupChats: [String: [ChatFile]] = [:]
+            var loadedGroupChats: [String: ChatFile] = [:]
 
-            for itemURL in groupContents {
-                var isDirectory: ObjCBool = false
-                guard fileManager.fileExists(atPath: itemURL.path, isDirectory: &isDirectory),
-                      isDirectory.boolValue else { continue }
-
-                let groupID = itemURL.lastPathComponent
-                let chats = try await loadChats(in: itemURL)
-                if !chats.isEmpty {
-                    loadedGroupChats[groupID] = chats
+            for fileURL in groupContents where fileURL.pathExtension == "jsonl" {
+                do {
+                    let chat = try ChatFile.load(from: fileURL)
+                    // Key by filename without extension (matches SillyTavern's chat_id)
+                    let chatID = fileURL.deletingPathExtension().lastPathComponent
+                    loadedGroupChats[chatID] = chat
+                } catch {
+                    print("Failed to load group chat \(fileURL.lastPathComponent): \(error)")
                 }
             }
 
-            chatsByGroup = loadedGroupChats
+            allGroupChats = loadedGroupChats
 
         } catch {
             self.error = error
@@ -294,9 +289,13 @@ final class ChatStore {
 
     // MARK: - Group Chat Management
 
-    /// Get all chats for a group
+    /// Get all chats for a group (looks up by group's chats array)
     func chats(for group: CharacterGroup) -> [ChatFile] {
-        return chatsByGroup[group.id.uuidString] ?? []
+        // SillyTavern stores chat IDs in group.chats array
+        // For now, return all group chats (we'll filter by group later if needed)
+        // Sort by modification date (most recent first)
+        return allGroupChats.values
+            .sorted { ($0.lastModified ?? .distantPast) > ($1.lastModified ?? .distantPast) }
     }
 
     /// Create a new chat for a group
@@ -322,24 +321,22 @@ final class ChatStore {
         return chat
     }
 
-    /// Save a chat to disk for a group
+    /// Save a chat to disk for a group (flat in group chats/)
     func save(_ chat: ChatFile, for group: CharacterGroup) async throws {
-        let directory = chatDirectory(for: group)
-
         // Ensure directory exists
-        try fileManager.createDirectory(at: directory, withIntermediateDirectories: true)
+        try fileManager.createDirectory(at: groupChatsDirectory, withIntermediateDirectories: true)
 
-        // Determine file URL
+        // Determine file URL (flat in group chats/)
         let fileURL: URL
         if let existingURL = chat.fileURL {
             fileURL = existingURL
         } else {
             let filename = sanitizeFilename(chat.fileName) + ".jsonl"
-            fileURL = directory.appendingPathComponent(filename)
+            fileURL = groupChatsDirectory.appendingPathComponent(filename)
         }
 
         try chat.save(to: fileURL)
-        // FolderMonitor will trigger loadAll() to refresh chatsByGroup
+        // FolderMonitor will trigger loadAll() to refresh allGroupChats
     }
 
     /// Auto-save the active chat for a group
@@ -357,7 +354,7 @@ final class ChatStore {
         guard let fileURL = chat.fileURL else { return }
 
         try fileManager.removeItem(at: fileURL)
-        // FolderMonitor will trigger loadAll() to refresh chatsByGroup
+        // FolderMonitor will trigger loadAll() to refresh allGroupChats
     }
 
     // MARK: - Helpers
