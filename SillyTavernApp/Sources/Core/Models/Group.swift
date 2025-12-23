@@ -18,7 +18,8 @@ final class CharacterGroup: Identifiable, Hashable {
     // Group-specific settings
     var groupNudge: String
     var jailbreak: String
-    var pastChats: [UUID]
+    var chats: [String] = []       // Chat IDs (SillyTavern format: "2025-12-22@22h30m45s")
+    var chatID: String?            // Current active chat ID
     var chatMetadata: [String: JSONValue]
 
     // File storage
@@ -42,7 +43,8 @@ final class CharacterGroup: Identifiable, Hashable {
         self.disabledMembers = []
         self.groupNudge = ""
         self.jailbreak = ""
-        self.pastChats = []
+        self.chats = []
+        self.chatID = nil
         self.chatMetadata = [:]
     }
 
@@ -104,13 +106,11 @@ final class CharacterGroup: Identifiable, Hashable {
             })
         }
 
-        // Load past chats
-        if let chats = json["past_chats"]?.array {
-            self.pastChats = chats.compactMap { value -> UUID? in
-                guard let str = value.string else { return nil }
-                return UUID(uuidString: str)
-            }
+        // Load chats (SillyTavern format - array of string IDs)
+        if let chatArray = json["chats"]?.array {
+            self.chats = chatArray.compactMap { $0.string }
         }
+        self.chatID = json["chat_id"]?.string
 
         self.chatMetadata = json["chat_metadata"]?.object ?? [:]
     }
@@ -130,7 +130,10 @@ final class CharacterGroup: Identifiable, Hashable {
         json["jailbreak"] = .string(jailbreak)
         json["favorites"] = .array(favoriteMembers.map { .string($0.uuidString) })
         json["disabled_members"] = .array(disabledMembers.map { .string($0.uuidString) })
-        json["past_chats"] = .array(pastChats.map { .string($0.uuidString) })
+        json["chats"] = .array(chats.map { .string($0) })
+        if let chatID = chatID {
+            json["chat_id"] = .string(chatID)
+        }
         json["chat_metadata"] = .object(chatMetadata)
 
         return json

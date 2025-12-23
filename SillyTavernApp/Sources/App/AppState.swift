@@ -86,6 +86,9 @@ final class AppState {
         for group in groups.groups {
             groups.resolveMembers(for: group, from: characters.characters)
         }
+
+        // Migrate old-format group chats to SillyTavern format
+        await migrateGroupChats()
     }
 
     // MARK: - Chat Actions
@@ -249,6 +252,9 @@ final class AppState {
                     for: group,
                     userName: settings.personaName
                 )
+                // Save group to persist the updated chats array
+                await groups.save(group)
+
                 self.activeChatFile = chatFile
                 chats.activeChat = chatFile
 
@@ -331,6 +337,9 @@ final class AppState {
                 for: group,
                 userName: settings.personaName
             )
+            // Save group to persist the updated chats array
+            await groups.save(group)
+
             self.activeChatFile = chatFile
             chats.activeChat = chatFile
 
@@ -357,6 +366,22 @@ final class AppState {
         } catch {
             self.chats.error = error
         }
+    }
+
+    // MARK: - Migration
+
+    /// Migrate old-format group chats and update groups
+    func migrateGroupChats() async {
+        for group in groups.groups {
+            do {
+                try await chats.migrateOldGroupChats(for: group)
+                await groups.save(group)
+            } catch {
+                print("Failed to migrate group chats for \(group.name): \(error)")
+            }
+        }
+        // Reload chats after migration
+        await chats.loadAll()
     }
 }
 

@@ -61,6 +61,19 @@ final class ChatStore {
         return name.components(separatedBy: invalidChars).joined(separator: "_")
     }
 
+    /// Generate SillyTavern-compatible chat ID (format: "2025-12-22@22h30m45s")
+    private func generateChatID(from date: Date = Date()) -> String {
+        let calendar = Calendar.current
+        let year = calendar.component(.year, from: date)
+        let month = calendar.component(.month, from: date)
+        let day = calendar.component(.day, from: date)
+        let hour = calendar.component(.hour, from: date)
+        let minute = calendar.component(.minute, from: date)
+        let second = calendar.component(.second, from: date)
+
+        return String(format: "%04d-%02d-%02d@%02dh%02dm%02ds", year, month, day, hour, minute, second)
+    }
+
     // MARK: - Loading
 
     /// Load all chats for all characters and groups
@@ -289,34 +302,35 @@ final class ChatStore {
 
     // MARK: - Group Chat Management
 
-    /// Get all chats for a group (looks up by group's chats array)
+    /// Get all chats for a group (filtered by group's chats array)
     func chats(for group: CharacterGroup) -> [ChatFile] {
-        // SillyTavern stores chat IDs in group.chats array
-        // For now, return all group chats (we'll filter by group later if needed)
-        // Sort by modification date (most recent first)
-        return allGroupChats.values
-            .sorted { ($0.lastModified ?? .distantPast) > ($1.lastModified ?? .distantPast) }
+        // Return chats that are in the group's chats array, in order
+        return group.chats.compactMap { chatID in
+            allGroupChats[chatID]
+        }
     }
 
     /// Create a new chat for a group
     func createGroupChat(
         for group: CharacterGroup,
-        userName: String = "User",
-        fileName: String? = nil
+        userName: String = "User"
     ) async throws -> ChatFile {
-        let chatName = fileName ?? "Chat \(Date().formatted(date: .abbreviated, time: .shortened))"
+        // Generate SillyTavern-compatible chat ID
+        let chatID = generateChatID()
 
         let chat = ChatFile(
-            fileName: chatName,
+            fileName: chatID,
             user_name: userName,
             character_name: group.name  // Use group name as character name
         )
 
-        // For group chats, we don't add an initial greeting
-        // The first speaker will be selected when the user sends a message
+        // Save as <chatID>.jsonl
+        let fileURL = groupChatsDirectory.appendingPathComponent("\(chatID).jsonl")
+        try chat.save(to: fileURL)
 
-        // Save immediately so FolderMonitor picks it up
-        try await save(chat, for: group)
+        // Update group's chat list
+        group.chats.append(chatID)
+        group.chatID = chatID
 
         return chat
     }
@@ -355,6 +369,52 @@ final class ChatStore {
 
         try fileManager.removeItem(at: fileURL)
         // FolderMonitor will trigger loadAll() to refresh allGroupChats
+    }
+
+    // MARK: - Migration
+
+    /// Migrate old-format group chats to SillyTavern format
+    /// Old format: "Chat Dec 22, 2025 at 4_29 PM.jsonl"
+    /// New format: "2025-12-22@22h30m45s.jsonl"
+    func migrateOldGroupChats(for group: CharacterGroup) async throws {
+        let stPattern = #"^\d{4}-\d{2}-\d{2}@\d{2}h\d{2}m\d{2}s$"#
+
+        let contents = try fileManager.contentsOfDirectory(
+            at: groupChatsDirectory,
+            includingPropertiesForKeys: [.contentModificationDateKey],
+            options: [.skipsHiddenFiles]
+        )
+
+        for fileURL in contents where fileURL.pathExtension == "jsonl" {
+            let basename = fileURL.deletingPathExtension().lastPathComponent
+
+            // Skip if already in SillyTavern format
+            if basename.range(of: stPattern, options: .regularExpression) != nil {
+                // Already in ST format - just ensure it's in the group's chats array
+                if !group.chats.contains(basename) {
+                    group.chats.append(basename)
+                }
+                continue
+            }
+
+            // Get modification date for new ID
+            let attrs = try fileManager.attributesOfItem(atPath: fileURL.path)
+            let modDate = attrs[.modificationDate] as? Date ?? Date()
+
+            // Generate new ID from mod date
+            let newID = generateChatID(from: modDate)
+            let newURL = groupChatsDirectory.appendingPathComponent("\(newID).jsonl")
+
+            // Rename file
+            try fileManager.moveItem(at: fileURL, to: newURL)
+
+            // Add to group's chats
+            if !group.chats.contains(newID) {
+                group.chats.append(newID)
+            }
+
+            print("Migrated group chat: \(basename) -> \(newID)")
+        }
     }
 
     // MARK: - Helpers
