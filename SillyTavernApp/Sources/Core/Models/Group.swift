@@ -4,57 +4,83 @@ import Observation
 // MARK: - Character Group Model
 
 /// A group chat containing multiple characters.
+/// Matches SillyTavern's group format exactly.
 @Observable
 final class CharacterGroup: Identifiable, Hashable {
-    let id: UUID
+    // ID is a string timestamp (e.g., "1703289600000"), not UUID
+    let id: String
     var name: String
-    var members: [GroupMember]
+    var members: [String]  // Avatar filenames (e.g., "Nikki.png")
     var activationStrategy: ActivationStrategy
     var generationMode: GenerationMode
     var allowSelfResponse: Bool
-    var favoriteMembers: Set<UUID>
-    var disabledMembers: Set<UUID>
+
+    // These are avatar filename strings, not UUIDs
+    var favoriteMembers: Set<String>
+    var disabledMembers: Set<String>
 
     // Group-specific settings
+    var avatarURL: String?
+    var fav: Bool
     var groupNudge: String
     var jailbreak: String
-    var chats: [String] = []       // Chat IDs (SillyTavern format: "2025-12-22@22h30m45s")
-    var chatID: String?            // Current active chat ID
+    var chats: [String]       // Chat IDs (SillyTavern format)
+    var chatID: String?       // Current active chat ID
     var chatMetadata: [String: JSONValue]
+    var pastMetadata: [String: JSONValue]
+
+    // Auto-mode settings
+    var autoModeDelay: Int
+    var generationModeJoinPrefix: String
+    var generationModeJoinSuffix: String
+    var hideMutedSprites: Bool
+    var dateLastChat: Int?
 
     // File storage
     var fileURL: URL?
     private var rawJSON: [String: JSONValue] = [:]
 
+    // MARK: - Cached character references (not persisted)
+
+    /// Resolved character cards for members (populated by GroupStore)
+    var resolvedMembers: [CharacterCard] = []
+
     init(
-        id: UUID = UUID(),
-        name: String = "",
-        members: [GroupMember] = [],
-        activationStrategy: ActivationStrategy = .natural,
-        generationMode: GenerationMode = .swap
+        id: String = String(Int(Date().timeIntervalSince1970 * 1000)),
+        name: String = ""
     ) {
         self.id = id
         self.name = name
-        self.members = members
-        self.activationStrategy = activationStrategy
-        self.generationMode = generationMode
+        self.members = []
+        self.activationStrategy = .natural
+        self.generationMode = .swap
         self.allowSelfResponse = false
         self.favoriteMembers = []
         self.disabledMembers = []
+        self.avatarURL = nil
+        self.fav = false
         self.groupNudge = ""
         self.jailbreak = ""
         self.chats = []
         self.chatID = nil
         self.chatMetadata = [:]
+        self.pastMetadata = [:]
+        self.autoModeDelay = 5
+        self.generationModeJoinPrefix = ""
+        self.generationModeJoinSuffix = ""
+        self.hideMutedSprites = false
+        self.dateLastChat = nil
     }
 
     convenience init(fromJSON json: [String: JSONValue], url: URL? = nil) {
-        // Load ID from JSON if present, otherwise generate new one
-        let id: UUID
-        if let idString = json["id"]?.string, let uuid = UUID(uuidString: idString) {
-            id = uuid
+        // ID can be string or number in SillyTavern
+        let id: String
+        if let idString = json["id"]?.string {
+            id = idString
+        } else if let idNum = json["id"]?.number {
+            id = String(Int(idNum))
         } else {
-            id = UUID()
+            id = String(Int(Date().timeIntervalSince1970 * 1000))
         }
         self.init(id: id)
         self.rawJSON = json
@@ -66,53 +92,57 @@ final class CharacterGroup: Identifiable, Hashable {
 
     func load(from json: [String: JSONValue]) {
         self.rawJSON = json
-
         self.name = json["name"]?.string ?? ""
 
-        // Load members
+        // Members are avatar filenames
         if let memberArray = json["members"]?.array {
-            self.members = memberArray.compactMap { value -> GroupMember? in
-                guard let memberID = value.string else { return nil }
-                return GroupMember(characterID: memberID)
-            }
+            self.members = memberArray.compactMap { $0.string }
         }
 
-        // Load activation strategy
         if let strategy = json["activation_strategy"]?.int {
             self.activationStrategy = ActivationStrategy(rawValue: strategy) ?? .natural
         }
-
-        // Load generation mode
         if let mode = json["generation_mode"]?.int {
             self.generationMode = GenerationMode(rawValue: mode) ?? .swap
         }
 
         self.allowSelfResponse = json["allow_self_responses"]?.bool ?? false
+        self.avatarURL = json["avatar_url"]?.string
+        self.fav = json["fav"]?.bool ?? false
         self.groupNudge = json["group_nudge"]?.string ?? ""
         self.jailbreak = json["jailbreak"]?.string ?? ""
 
-        // Load favorites and disabled
+        // Favorites and disabled are avatar filename strings
         if let favs = json["favorites"]?.array {
-            self.favoriteMembers = Set(favs.compactMap { value -> UUID? in
-                guard let str = value.string else { return nil }
-                return UUID(uuidString: str)
-            })
+            self.favoriteMembers = Set(favs.compactMap { $0.string })
         }
-
         if let disabled = json["disabled_members"]?.array {
-            self.disabledMembers = Set(disabled.compactMap { value -> UUID? in
-                guard let str = value.string else { return nil }
-                return UUID(uuidString: str)
-            })
+            self.disabledMembers = Set(disabled.compactMap { $0.string })
         }
 
-        // Load chats (SillyTavern format - array of string IDs)
+        // Chat IDs - handle both string and number
         if let chatArray = json["chats"]?.array {
-            self.chats = chatArray.compactMap { $0.string }
+            self.chats = chatArray.compactMap { value -> String? in
+                if let str = value.string { return str }
+                if let num = value.number { return String(Int(num)) }
+                return nil
+            }
         }
-        self.chatID = json["chat_id"]?.string
+        if let chatIDStr = json["chat_id"]?.string {
+            self.chatID = chatIDStr
+        } else if let chatIDNum = json["chat_id"]?.number {
+            self.chatID = String(Int(chatIDNum))
+        }
 
         self.chatMetadata = json["chat_metadata"]?.object ?? [:]
+        self.pastMetadata = json["past_metadata"]?.object ?? [:]
+
+        // Auto-mode settings
+        self.autoModeDelay = json["auto_mode_delay"]?.int ?? 5
+        self.generationModeJoinPrefix = json["generation_mode_join_prefix"]?.string ?? ""
+        self.generationModeJoinSuffix = json["generation_mode_join_suffix"]?.string ?? ""
+        self.hideMutedSprites = json["hideMutedSprites"]?.bool ?? false
+        self.dateLastChat = json["date_last_chat"]?.int
     }
 
     // MARK: - Save to JSON
@@ -120,21 +150,33 @@ final class CharacterGroup: Identifiable, Hashable {
     func toJSON() -> [String: JSONValue] {
         var json = rawJSON
 
-        json["id"] = .string(id.uuidString)  // Persist ID for stable chat directory
+        json["id"] = .string(id)
         json["name"] = .string(name)
-        json["members"] = .array(members.map { .string($0.characterID) })
+        json["members"] = .array(members.map { .string($0) })
         json["activation_strategy"] = .number(Double(activationStrategy.rawValue))
         json["generation_mode"] = .number(Double(generationMode.rawValue))
         json["allow_self_responses"] = .bool(allowSelfResponse)
+        if let avatarURL = avatarURL {
+            json["avatar_url"] = .string(avatarURL)
+        }
+        json["fav"] = .bool(fav)
         json["group_nudge"] = .string(groupNudge)
         json["jailbreak"] = .string(jailbreak)
-        json["favorites"] = .array(favoriteMembers.map { .string($0.uuidString) })
-        json["disabled_members"] = .array(disabledMembers.map { .string($0.uuidString) })
+        json["favorites"] = .array(favoriteMembers.map { .string($0) })
+        json["disabled_members"] = .array(disabledMembers.map { .string($0) })
         json["chats"] = .array(chats.map { .string($0) })
         if let chatID = chatID {
             json["chat_id"] = .string(chatID)
         }
         json["chat_metadata"] = .object(chatMetadata)
+        json["past_metadata"] = .object(pastMetadata)
+        json["auto_mode_delay"] = .number(Double(autoModeDelay))
+        json["generation_mode_join_prefix"] = .string(generationModeJoinPrefix)
+        json["generation_mode_join_suffix"] = .string(generationModeJoinSuffix)
+        json["hideMutedSprites"] = .bool(hideMutedSprites)
+        if let dateLastChat = dateLastChat {
+            json["date_last_chat"] = .number(Double(dateLastChat))
+        }
 
         return json
     }
@@ -151,39 +193,54 @@ final class CharacterGroup: Identifiable, Hashable {
     // MARK: - Member Management
 
     /// Get enabled members (not in disabledMembers)
-    var enabledMembers: [GroupMember] {
-        members.filter { !disabledMembers.contains($0.id) }
+    var enabledMembers: [String] {
+        members.filter { !disabledMembers.contains($0) }
     }
 
-    /// Add a member to the group
-    func addMember(_ member: GroupMember) {
-        guard !members.contains(where: { $0.characterID == member.characterID }) else { return }
-        members.append(member)
+    /// Get enabled resolved characters
+    var enabledCharacters: [CharacterCard] {
+        resolvedMembers.filter { !disabledMembers.contains($0.avatar) }
     }
 
-    /// Remove a member from the group
-    func removeMember(_ member: GroupMember) {
-        members.removeAll { $0.id == member.id }
-        favoriteMembers.remove(member.id)
-        disabledMembers.remove(member.id)
+    /// Add a member to the group by avatar filename
+    func addMember(_ avatar: String) {
+        guard !members.contains(avatar) else { return }
+        members.append(avatar)
+    }
+
+    /// Remove a member from the group by avatar filename
+    func removeMember(_ avatar: String) {
+        members.removeAll { $0 == avatar }
+        favoriteMembers.remove(avatar)
+        disabledMembers.remove(avatar)
     }
 
     /// Toggle member enabled state
-    func toggleMember(_ member: GroupMember) {
-        if disabledMembers.contains(member.id) {
-            disabledMembers.remove(member.id)
+    func toggleMember(_ avatar: String) {
+        if disabledMembers.contains(avatar) {
+            disabledMembers.remove(avatar)
         } else {
-            disabledMembers.insert(member.id)
+            disabledMembers.insert(avatar)
         }
     }
 
     /// Toggle member favorite state
-    func toggleFavorite(_ member: GroupMember) {
-        if favoriteMembers.contains(member.id) {
-            favoriteMembers.remove(member.id)
+    func toggleFavorite(_ avatar: String) {
+        if favoriteMembers.contains(avatar) {
+            favoriteMembers.remove(avatar)
         } else {
-            favoriteMembers.insert(member.id)
+            favoriteMembers.insert(avatar)
         }
+    }
+
+    /// Check if a member is enabled
+    func isMemberEnabled(_ avatar: String) -> Bool {
+        !disabledMembers.contains(avatar)
+    }
+
+    /// Check if a member is favorited
+    func isMemberFavorite(_ avatar: String) -> Bool {
+        favoriteMembers.contains(avatar)
     }
 
     // MARK: - Hashable & Equatable
@@ -194,33 +251,6 @@ final class CharacterGroup: Identifiable, Hashable {
 
     func hash(into hasher: inout Hasher) {
         hasher.combine(id)
-    }
-}
-
-// MARK: - Group Member
-
-/// A member of a group, referencing a character.
-struct GroupMember: Identifiable, Hashable {
-    let id: UUID
-    let characterID: String
-
-    // Cached reference to the actual character (not persisted)
-    var character: CharacterCard?
-
-    init(id: UUID = UUID(), characterID: String, character: CharacterCard? = nil) {
-        self.id = id
-        self.characterID = characterID
-        self.character = character
-    }
-
-    // Implement Hashable manually to exclude the character reference
-    func hash(into hasher: inout Hasher) {
-        hasher.combine(id)
-        hasher.combine(characterID)
-    }
-
-    static func == (lhs: GroupMember, rhs: GroupMember) -> Bool {
-        lhs.id == rhs.id && lhs.characterID == rhs.characterID
     }
 }
 
@@ -287,96 +317,94 @@ enum GenerationMode: Int, CaseIterable, Sendable, Codable {
 final class GroupChatState {
     var group: CharacterGroup?
     var currentSpeakerIndex: Int = 0
-    var selectedNextSpeaker: GroupMember?
-    var speakingHistory: [UUID] = []
+    var selectedNextSpeaker: CharacterCard?
+    var speakingHistory: [String] = []  // Avatar filenames
 
     /// Get the next speaker based on activation strategy
-    func getNextSpeaker(lastMessage: String? = nil, lastSpeakerName: String? = nil) -> GroupMember? {
+    func getNextSpeaker(lastMessage: String? = nil, lastSpeakerName: String? = nil) -> CharacterCard? {
         guard let group = group else { return nil }
-        let enabled = group.enabledMembers
+        let enabledChars = group.enabledCharacters
 
-        guard !enabled.isEmpty else { return nil }
+        guard !enabledChars.isEmpty else { return nil }
 
         switch group.activationStrategy {
         case .natural:
             // Natural mode uses mentions and talkativeness
             return selectNaturalOrder(
-                from: enabled,
+                from: enabledChars,
                 input: lastMessage,
                 bannedName: group.allowSelfResponse ? nil : lastSpeakerName
             )
 
         case .list:
             // Round-robin through enabled members
-            let speaker = enabled[currentSpeakerIndex % enabled.count]
-            currentSpeakerIndex = (currentSpeakerIndex + 1) % enabled.count
+            let speaker = enabledChars[currentSpeakerIndex % enabledChars.count]
+            currentSpeakerIndex = (currentSpeakerIndex + 1) % enabledChars.count
             return speaker
 
         case .manual:
             // Use selected speaker or first enabled
-            return selectedNextSpeaker ?? enabled.first
+            return selectedNextSpeaker ?? enabledChars.first
 
         case .pooled:
             // Weighted random based on talkativeness
-            return selectPooledSpeaker(from: enabled)
+            return selectPooledSpeaker(from: enabledChars)
         }
     }
 
     /// Select speaker using natural order strategy
     /// Priority: 1) Mentioned characters, 2) Talkativeness roll, 3) Random fallback
-    private func selectNaturalOrder(from members: [GroupMember], input: String?, bannedName: String?) -> GroupMember? {
-        guard !members.isEmpty else { return nil }
+    private func selectNaturalOrder(from characters: [CharacterCard], input: String?, bannedName: String?) -> CharacterCard? {
+        guard !characters.isEmpty else { return nil }
 
-        var activatedMembers: [GroupMember] = []
+        var activatedChars: [CharacterCard] = []
 
         // 1. Find mentions in input (excluding banned speaker)
         if let input = input, !input.isEmpty {
             let inputWords = extractWords(from: input.lowercased())
-            for member in members {
-                guard let character = member.character else { continue }
+            for character in characters {
                 guard character.name != bannedName else { continue }
 
                 let nameWords = extractWords(from: character.name.lowercased())
                 if inputWords.contains(where: { nameWords.contains($0) }) {
-                    activatedMembers.append(member)
+                    activatedChars.append(character)
                     break // Only add one mention
                 }
             }
         }
 
         // 2. Activation by talkativeness (shuffled, excluding banned)
-        var chattyMembers: [GroupMember] = []
-        let shuffledMembers = members.shuffled()
+        var chattyChars: [CharacterCard] = []
+        let shuffledChars = characters.shuffled()
 
-        for member in shuffledMembers {
-            guard let character = member.character else { continue }
+        for character in shuffledChars {
             guard character.name != bannedName else { continue }
 
             let talkativeness = character.talkativeness
             let rollValue = Double.random(in: 0...1)
 
             if talkativeness >= rollValue {
-                activatedMembers.append(member)
+                activatedChars.append(character)
             }
             if talkativeness > 0 {
-                chattyMembers.append(member)
+                chattyChars.append(character)
             }
         }
 
         // 3. Pick random if no one activated
-        if activatedMembers.isEmpty {
-            let pool = chattyMembers.isEmpty ? members : chattyMembers
+        if activatedChars.isEmpty {
+            let pool = chattyChars.isEmpty ? characters : chattyChars
             // Filter out banned speaker
-            let validPool = pool.filter { $0.character?.name != bannedName }
+            let validPool = pool.filter { $0.name != bannedName }
             if let random = validPool.randomElement() {
                 return random
             }
             // If all are banned (shouldn't happen), just pick first
-            return members.first
+            return characters.first
         }
 
         // Return first activated (prioritizes mentions)
-        return activatedMembers.first
+        return activatedChars.first
     }
 
     /// Extract words from text for mention matching
@@ -387,34 +415,34 @@ final class GroupChatState {
     }
 
     /// Select speaker using pooled (weighted) strategy
-    private func selectPooledSpeaker(from members: [GroupMember]) -> GroupMember? {
-        guard !members.isEmpty else { return nil }
+    private func selectPooledSpeaker(from characters: [CharacterCard]) -> CharacterCard? {
+        guard !characters.isEmpty else { return nil }
 
         // Calculate weights based on talkativeness
-        let weights: [(member: GroupMember, weight: Double)] = members.map { member in
-            let talkativeness = member.character?.talkativeness ?? 0.5
+        let weights: [(character: CharacterCard, weight: Double)] = characters.map { character in
+            let talkativeness = character.talkativeness
             // Convert talkativeness (0-1) to weight (0.1-1.0)
             let weight = max(0.1, talkativeness)
-            return (member, weight)
+            return (character, weight)
         }
 
         // Random weighted selection
         let totalWeight = weights.reduce(0) { $0 + $1.weight }
         var random = Double.random(in: 0..<totalWeight)
 
-        for (member, weight) in weights {
+        for (character, weight) in weights {
             random -= weight
             if random <= 0 {
-                return member
+                return character
             }
         }
 
-        return members.last
+        return characters.last
     }
 
     /// Record that a character spoke
-    func recordSpeaker(_ member: GroupMember) {
-        speakingHistory.append(member.id)
+    func recordSpeaker(_ avatar: String) {
+        speakingHistory.append(avatar)
         // Keep history limited
         if speakingHistory.count > 100 {
             speakingHistory.removeFirst()

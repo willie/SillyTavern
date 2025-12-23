@@ -14,8 +14,8 @@ struct GroupListView: View {
         }
         return groups.filter {
             $0.name.localizedCaseInsensitiveContains(appState.searchText) ||
-            $0.members.contains { member in
-                member.character?.name.localizedCaseInsensitiveContains(appState.searchText) ?? false
+            $0.resolvedMembers.contains { char in
+                char.name.localizedCaseInsensitiveContains(appState.searchText)
             }
         }
     }
@@ -177,7 +177,7 @@ struct GroupRowView: View {
     }
 
     var memberNames: String {
-        let names = group.members.prefix(3).compactMap { $0.character?.name }
+        let names = group.resolvedMembers.prefix(3).map { $0.name }
         if names.isEmpty {
             return "No members"
         }
@@ -230,17 +230,15 @@ struct GroupRowView: View {
     private var avatarStack: some View {
         ZStack {
             // Show up to 3 member avatars stacked
-            ForEach(Array(group.members.prefix(3).enumerated()), id: \.element.id) { index, member in
+            ForEach(Array(group.resolvedMembers.prefix(3).enumerated()), id: \.element.id) { index, char in
                 Circle()
                     .fill(Color.secondary.opacity(0.2))
                     .frame(width: 32, height: 32)
                     .overlay {
-                        if let char = member.character {
-                            Text(String(char.name.prefix(1)).uppercased())
-                                .font(.caption)
-                                .fontWeight(.medium)
-                                .foregroundStyle(.secondary)
-                        }
+                        Text(String(char.name.prefix(1)).uppercased())
+                            .font(.caption)
+                            .fontWeight(.medium)
+                            .foregroundStyle(.secondary)
                     }
                     .offset(x: CGFloat(index) * 12)
             }
@@ -332,6 +330,11 @@ struct GroupDetailView: View {
 
     // MARK: - Members Section
 
+    /// Helper to find character for a member avatar
+    private func character(for avatar: String) -> CharacterCard? {
+        group.resolvedMembers.first { $0.avatar == avatar || $0.name == avatar }
+    }
+
     private var membersSection: some View {
         Section {
             if group.members.isEmpty {
@@ -341,9 +344,10 @@ struct GroupDetailView: View {
                     Text("Add characters to this group")
                 }
             } else {
-                ForEach(group.members) { member in
+                ForEach(group.members, id: \.self) { avatar in
                     GroupMemberRow(
-                        member: member,
+                        avatar: avatar,
+                        character: character(for: avatar),
                         group: group,
                         isEditing: isEditing,
                         onSave: saveGroup
@@ -372,7 +376,8 @@ struct GroupDetailView: View {
 
     private func deleteMembers(at offsets: IndexSet) {
         for index in offsets {
-            group.removeMember(group.members[index])
+            let avatar = group.members[index]
+            group.removeMember(avatar)
         }
     }
 
@@ -394,17 +399,18 @@ struct GroupDetailView: View {
 // MARK: - Group Member Row
 
 struct GroupMemberRow: View {
-    let member: GroupMember
+    let avatar: String  // Avatar filename (member identifier)
+    let character: CharacterCard?  // Resolved character (may be nil if not found)
     let group: CharacterGroup
     let isEditing: Bool
     var onSave: (() -> Void)?
 
     var isEnabled: Bool {
-        !group.disabledMembers.contains(member.id)
+        !group.disabledMembers.contains(avatar)
     }
 
     var isFavorite: Bool {
-        group.favoriteMembers.contains(member.id)
+        group.favoriteMembers.contains(avatar)
     }
 
     var body: some View {
@@ -414,7 +420,7 @@ struct GroupMemberRow: View {
                 .fill(isEnabled ? Color.green.opacity(0.2) : Color.secondary.opacity(0.2))
                 .frame(width: 36, height: 36)
                 .overlay {
-                    if let char = member.character {
+                    if let char = character {
                         Text(String(char.name.prefix(1)).uppercased())
                             .font(.caption)
                             .fontWeight(.medium)
@@ -425,7 +431,7 @@ struct GroupMemberRow: View {
             // Info
             VStack(alignment: .leading, spacing: 2) {
                 HStack {
-                    Text(member.character?.name ?? member.characterID)
+                    Text(character?.name ?? avatar)
                         .font(.headline)
 
                     if isFavorite {
@@ -435,7 +441,7 @@ struct GroupMemberRow: View {
                     }
                 }
 
-                if let char = member.character, !char.description.isEmpty {
+                if let char = character, !char.description.isEmpty {
                     Text(char.description)
                         .font(.caption)
                         .foregroundStyle(.secondary)
@@ -448,7 +454,7 @@ struct GroupMemberRow: View {
             if !isEditing {
                 // Toggle enabled
                 Button {
-                    group.toggleMember(member)
+                    group.toggleMember(avatar)
                     onSave?()
                 } label: {
                     Image(systemName: isEnabled ? "eye" : "eye.slash")
@@ -460,14 +466,14 @@ struct GroupMemberRow: View {
         .opacity(isEnabled ? 1 : 0.6)
         .contextMenu {
             Button {
-                group.toggleMember(member)
+                group.toggleMember(avatar)
                 onSave?()
             } label: {
                 Label(isEnabled ? "Disable" : "Enable", systemImage: isEnabled ? "eye.slash" : "eye")
             }
 
             Button {
-                group.toggleFavorite(member)
+                group.toggleFavorite(avatar)
                 onSave?()
             } label: {
                 Label(isFavorite ? "Unfavorite" : "Favorite", systemImage: isFavorite ? "star.slash" : "star")
@@ -476,7 +482,7 @@ struct GroupMemberRow: View {
             Divider()
 
             Button(role: .destructive) {
-                group.removeMember(member)
+                group.removeMember(avatar)
                 onSave?()
             } label: {
                 Label("Remove", systemImage: "trash")
@@ -494,15 +500,16 @@ struct AddMemberSheet: View {
     @State private var searchText = ""
 
     var availableCharacters: [CharacterCard] {
-        let existingIDs = Set(group.members.map { $0.characterID })
+        // Members are avatar filenames - filter out characters already in the group
+        let existingAvatars = Set(group.members)
         return appState.characters.characters.filter { char in
-            !existingIDs.contains(stableID(for: char))
+            !existingAvatars.contains(avatarID(for: char))
         }
     }
 
-    /// Returns a stable unique identifier for a character
-    private func stableID(for character: CharacterCard) -> String {
-        // Use avatar if it's a valid unique identifier, otherwise use name
+    /// Returns the avatar identifier for a character (matches SillyTavern's member storage)
+    private func avatarID(for character: CharacterCard) -> String {
+        // SillyTavern stores avatar filename (e.g., "Nikki.png") or falls back to name
         if !character.avatar.isEmpty && character.avatar != "none" {
             return character.avatar
         }
@@ -563,8 +570,11 @@ struct AddMemberSheet: View {
     }
 
     private func addMember(_ character: CharacterCard) {
-        let member = GroupMember(characterID: stableID(for: character), character: character)
-        group.addMember(member)
+        // Add avatar filename as member (SillyTavern format)
+        let avatar = avatarID(for: character)
+        group.addMember(avatar)
+        // Also add to resolved members for immediate UI update
+        group.resolvedMembers.append(character)
     }
 }
 

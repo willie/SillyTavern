@@ -191,8 +191,8 @@ final class ChatState {
         guard let groupChatState = groupChatState else { return nil }
 
         let lastSpeaker = messages.last.flatMap { $0.is_user ? nil : $0.name }
-        let member = groupChatState.getNextSpeaker(lastMessage: input, lastSpeakerName: lastSpeaker)
-        return member?.character
+        // getNextSpeaker now returns CharacterCard directly (from resolvedMembers)
+        return groupChatState.getNextSpeaker(lastMessage: input, lastSpeakerName: lastSpeaker)
     }
 
     /// Regenerate the last assistant message

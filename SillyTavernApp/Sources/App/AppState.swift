@@ -939,11 +939,9 @@ final class GroupStore {
 
     /// Resolve group members to actual characters
     func resolveMembers(for group: CharacterGroup, from characters: [CharacterCard]) {
-        for i in group.members.indices {
-            let memberID = group.members[i].characterID
-            if let character = characters.first(where: { $0.avatar == memberID || $0.name == memberID }) {
-                group.members[i].character = character
-            }
+        // Members are avatar filename strings - resolve to CharacterCard objects
+        group.resolvedMembers = group.members.compactMap { avatar in
+            characters.first { $0.avatar == avatar || $0.name == avatar }
         }
     }
 }
