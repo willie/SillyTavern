@@ -290,14 +290,21 @@ enum ActivationStrategy: Int, CaseIterable, Sendable, Codable {
 
 /// Controls how new messages are generated in group chat.
 enum GenerationMode: Int, CaseIterable, Sendable, Codable {
-    case swap = 0         // Replace the last AI message with new character
-    case append = 1       // Append new message from next character
+    case swap = 0            // Replace the last AI message with new character
+    case append = 1          // Append new message from next character (joins enabled member cards)
+    case appendDisabled = 2  // Like append, but also includes disabled members in card joining
 
     var title: String {
         switch self {
         case .swap: return "Swap"
         case .append: return "Append"
+        case .appendDisabled: return "Append (Include Disabled)"
         }
+    }
+
+    /// Whether this mode joins all member cards together
+    var joinsCards: Bool {
+        self == .append || self == .appendDisabled
     }
 
     var description: String {
@@ -305,7 +312,9 @@ enum GenerationMode: Int, CaseIterable, Sendable, Codable {
         case .swap:
             return "Regenerate replaces the last AI message"
         case .append:
-            return "Regenerate adds a new message from the next character"
+            return "Joins enabled member cards with prefix/suffix"
+        case .appendDisabled:
+            return "Joins all member cards (including disabled) with prefix/suffix"
         }
     }
 }

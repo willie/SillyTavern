@@ -50,14 +50,53 @@ swift run              # Build and run (preferred for debugging)
 ## Data Compatibility
 
 Uses SillyTavern's data directory structure:
-- `characters/` - PNG files with embedded character JSON
+- `characters/` - PNG files with embedded character JSON (base64 in tEXt chunk)
 - `chats/<character_avatar>/` - JSONL chat files per character
-- `worlds/` - World info JSON files
-- `groups/` - Group configuration JSON files
+- `worlds/` - World info JSON files (entries as object keyed by uid)
+- `groups/` - Group JSON files named `<id>.json` (id is timestamp string like `"1703289600000"`)
+- `group chats/` - Group chat JSONL files (flat, format `2025-12-22@22h30m45s.jsonl`)
 
 Chat JSONL format:
 - Line 1: Metadata (`user_name`, `character_name`, `create_date`, `chat_metadata`)
 - Lines 2+: Messages (`name`, `is_user`, `send_date`, `mes`, `swipes`, `swipe_id`, `extra`)
+
+### Raw JSON Preservation Pattern (CRITICAL)
+
+SillyTavern data structures have many fields. To avoid data loss on round-trip:
+
+1. **Store raw JSON** - Models keep `private var rawJSON: [String: JSONValue]`
+2. **Typed accessors** - Common fields get typed properties that read/write to rawJSON
+3. **Preserve on save** - `toJSON()` starts with rawJSON and updates typed fields
+
+```swift
+struct ChatMetadata: Codable {
+    private var rawJSON: [String: JSONValue]
+
+    var note: String? {
+        get { rawJSON["note"]?.string }
+        set { rawJSON["note"] = newValue.map { .string($0) } }
+    }
+
+    func encode(to encoder: Encoder) throws {
+        var container = encoder.singleValueContainer()
+        try container.encode(rawJSON)  // Preserves ALL fields
+    }
+}
+```
+
+Models using this pattern: `CharacterCard`, `CharacterGroup`, `WorldInfoBook`, `WorldInfoEntry`, `ChatMetadata`, `MessageExtra`
+
+### Format Variants
+
+Some fields have multiple valid formats that must be handled:
+
+| Field | Variants |
+|-------|----------|
+| `send_date` | String (`"December 23, 2025 @ 10:30AM"`) or Number (`1703289600000`) |
+| `group.id` | String timestamp (`"1703289600000"`), not UUID |
+| `group.members` | Array of avatar filename strings, not objects |
+| `character_book.entries` | Array (V2 spec) or Object keyed by uid (ST internal) |
+| Character files | PNG with embedded JSON, or standalone JSON |
 
 ## Key Patterns
 

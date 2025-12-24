@@ -130,6 +130,62 @@ struct ExtensionPrompt: Sendable {
     var enabled: Bool
 }
 
+// MARK: - Group Context
+
+/// Context for group chat prompt building.
+/// Provides access to all group members and settings for APPEND mode card joining.
+/// Note: Not Sendable because it references @Observable model objects.
+struct GroupContext {
+    let group: CharacterGroup
+    let members: [CharacterCard]        // All resolved members
+    let currentSpeaker: CharacterCard   // Character generating this message
+    let chatMetadata: [String: JSONValue]  // For scenario/mes_example overrides
+
+    /// Get members to include in card joining based on generation mode
+    func membersForCardJoin() -> [CharacterCard] {
+        switch group.generationMode {
+        case .swap:
+            return []  // SWAP mode doesn't join cards
+        case .append:
+            // Include enabled members only
+            return members.filter { !group.disabledMembers.contains($0.avatar) }
+        case .appendDisabled:
+            // Include all members
+            return members
+        }
+    }
+
+    /// Get depth prompts from all eligible members
+    func collectDepthPrompts() -> [PromptEntry] {
+        guard group.generationMode != .swap else {
+            // In SWAP mode, only use current speaker's depth prompt
+            return []
+        }
+
+        var prompts: [PromptEntry] = []
+
+        for member in members {
+            // Skip disabled members unless it's the current speaker
+            if group.disabledMembers.contains(member.avatar) && member.id != currentSpeaker.id {
+                continue
+            }
+
+            if let depthPrompt = member.depth_prompt, !depthPrompt.prompt.isEmpty {
+                prompts.append(PromptEntry(
+                    identifier: "memberDepthPrompt_\(member.name)",
+                    role: PromptRole(rawValue: depthPrompt.role) ?? .system,
+                    content: depthPrompt.prompt,
+                    injectionPosition: .absolute,
+                    injectionDepth: depthPrompt.depth,
+                    injectionOrder: 100
+                ))
+            }
+        }
+
+        return prompts
+    }
+}
+
 // MARK: - Built Prompt Result
 
 /// The result of prompt building - ready to send to an LLM.
@@ -153,13 +209,13 @@ struct BuiltPrompt: Sendable {
 /// 1. worldInfoBefore
 /// 2. main (system prompt)
 /// 3. worldInfoAfter
-/// 4. charDescription
-/// 5. charPersonality
-/// 6. scenario
+/// 4. charDescription (joined for group APPEND modes)
+/// 5. charPersonality (joined for group APPEND modes)
+/// 6. scenario (joined for group APPEND modes, respects chat_metadata override)
 /// 7. personaDescription
 /// 8. nsfw, jailbreak
 /// 9. User prompts
-/// 10. Chat history (with absolute prompts injected at depth)
+/// 10. Chat history (with absolute prompts injected at depth by order/role priority)
 /// 11. Control prompts (impersonate, quietPrompt) - always last
 struct PromptBuilder {
     let character: CharacterCard
@@ -170,6 +226,9 @@ struct PromptBuilder {
     // Optional persona
     var personaDescription: String?
     var personaName: String?
+
+    // Optional group context for multi-character chats
+    var groupContext: GroupContext?
 
     // MARK: - Build
 
@@ -214,29 +273,38 @@ struct PromptBuilder {
             ))
         }
 
-        // 4. Character description
-        if !character.description.isEmpty {
+        // 4-6. Character cards (description, personality, scenario)
+        // For group APPEND modes, join all member cards with prefix/suffix
+        let (description, personality, scenario, mesExamples) = buildCharacterCards()
+
+        if !description.isEmpty {
             prompts.append(PromptEntry(
                 identifier: "charDescription",
-                content: character.description
+                content: description
             ))
         }
 
-        // 5. Character personality (formatted)
-        if !character.personality.isEmpty {
-            let formatted = formatPersonality(character.personality)
+        if !personality.isEmpty {
+            let formatted = formatPersonality(personality)
             prompts.append(PromptEntry(
                 identifier: "charPersonality",
                 content: formatted
             ))
         }
 
-        // 6. Scenario (formatted)
-        if !character.scenario.isEmpty {
-            let formatted = formatScenario(character.scenario)
+        if !scenario.isEmpty {
+            let formatted = formatScenario(scenario)
             prompts.append(PromptEntry(
                 identifier: "scenario",
                 content: formatted
+            ))
+        }
+
+        // Add mes_examples if present (after scenario, before persona)
+        if !mesExamples.isEmpty {
+            prompts.append(PromptEntry(
+                identifier: "mesExamples",
+                content: mesExamples
             ))
         }
 
@@ -267,8 +335,12 @@ struct PromptBuilder {
             ))
         }
 
-        // 10. Character's depth prompt (absolute position)
-        if let depthPrompt = character.depth_prompt, !depthPrompt.prompt.isEmpty {
+        // 10. Depth prompts (from character or all group members)
+        if let groupContext = groupContext, groupContext.group.generationMode.joinsCards {
+            // Group APPEND modes: collect depth prompts from all eligible members
+            absolutePrompts.append(contentsOf: groupContext.collectDepthPrompts())
+        } else if let depthPrompt = character.depth_prompt, !depthPrompt.prompt.isEmpty {
+            // Single character or SWAP mode: use current character's depth prompt only
             absolutePrompts.append(PromptEntry(
                 identifier: "characterDepthPrompt",
                 role: PromptRole(rawValue: depthPrompt.role) ?? .system,
@@ -328,8 +400,8 @@ struct PromptBuilder {
             ))
         }
 
-        // Group nudge prompt
-        if isGroupChat && !settings.groupNudgePrompt.isEmpty {
+        // Group nudge prompt (excluded for impersonate, as in SillyTavern)
+        if isGroupChat && type != .impersonate && !settings.groupNudgePrompt.isEmpty {
             controlPrompts.append(PromptEntry(
                 identifier: "groupNudge",
                 content: substituteParams(settings.groupNudgePrompt)
@@ -417,6 +489,149 @@ struct PromptBuilder {
             return character.post_history_instructions
         }
         return settings.jailbreakPrompt
+    }
+
+    /// Build character cards - joins member cards for group APPEND modes
+    private func buildCharacterCards() -> (description: String, personality: String, scenario: String, mesExamples: String) {
+        guard let groupContext = groupContext, groupContext.group.generationMode.joinsCards else {
+            // Single character or SWAP mode: use current character only
+            return (
+                description: character.description,
+                personality: character.personality,
+                scenario: character.scenario,
+                mesExamples: character.mes_example
+            )
+        }
+
+        let group = groupContext.group
+        let members = groupContext.membersForCardJoin()
+        let userName = personaName ?? "User"
+
+        // Join member cards with prefix/suffix
+        var descriptions: [String] = []
+        var personalities: [String] = []
+        var scenarios: [String] = []
+        var mesExamplesArray: [String] = []
+
+        for member in members {
+            // Apply prefix/suffix and macro replacement for each field
+            if !member.description.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                descriptions.append(prepareForJoin(
+                    value: member.description,
+                    fieldName: "Description",
+                    characterName: member.name,
+                    prefix: group.generationModeJoinPrefix,
+                    suffix: group.generationModeJoinSuffix,
+                    userName: userName
+                ))
+            }
+
+            if !member.personality.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                personalities.append(prepareForJoin(
+                    value: member.personality,
+                    fieldName: "Personality",
+                    characterName: member.name,
+                    prefix: group.generationModeJoinPrefix,
+                    suffix: group.generationModeJoinSuffix,
+                    userName: userName
+                ))
+            }
+
+            if !member.scenario.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                scenarios.append(prepareForJoin(
+                    value: member.scenario,
+                    fieldName: "Scenario",
+                    characterName: member.name,
+                    prefix: group.generationModeJoinPrefix,
+                    suffix: group.generationModeJoinSuffix,
+                    userName: userName
+                ))
+            }
+
+            if !member.mes_example.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                var example = member.mes_example.trimmingCharacters(in: .whitespacesAndNewlines)
+                // Ensure mes_example starts with <START>
+                if !example.hasPrefix("<START>") {
+                    example = "<START>\n" + example
+                }
+                mesExamplesArray.append(prepareForJoin(
+                    value: example,
+                    fieldName: "Example Messages",
+                    characterName: member.name,
+                    prefix: group.generationModeJoinPrefix,
+                    suffix: group.generationModeJoinSuffix,
+                    userName: userName
+                ))
+            }
+        }
+
+        let joinedDescription = descriptions.joined(separator: "\n")
+        let joinedPersonality = personalities.joined(separator: "\n")
+        let joinedMesExamples = mesExamplesArray.joined(separator: "\n")
+
+        // Check for scenario override in chat_metadata
+        let scenarioOverride = groupContext.chatMetadata["scenario"]?.string?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        let joinedScenario: String
+        if !scenarioOverride.isEmpty {
+            joinedScenario = substituteParamsForCharacter(scenarioOverride, characterName: character.name)
+        } else {
+            joinedScenario = scenarios.joined(separator: "\n")
+        }
+
+        // Check for mes_example override in chat_metadata
+        let mesExampleOverride = groupContext.chatMetadata["mes_example"]?.string?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        let finalMesExamples: String
+        if !mesExampleOverride.isEmpty {
+            finalMesExamples = substituteParamsForCharacter(mesExampleOverride, characterName: character.name)
+        } else {
+            finalMesExamples = joinedMesExamples
+        }
+
+        return (joinedDescription, joinedPersonality, joinedScenario, finalMesExamples)
+    }
+
+    /// Prepare a field value for joining with prefix/suffix
+    private func prepareForJoin(
+        value: String,
+        fieldName: String,
+        characterName: String,
+        prefix: String,
+        suffix: String,
+        userName: String
+    ) -> String {
+        let trimmed = value.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return "" }
+
+        // Replace <FIELDNAME> in prefix/suffix and run macro replacement
+        let processedPrefix = prefix
+            .replacingOccurrences(of: "<FIELDNAME>", with: fieldName, options: .caseInsensitive)
+            .replacingOccurrences(of: "{{char}}", with: characterName)
+            .replacingOccurrences(of: "{{user}}", with: userName)
+
+        let processedSuffix = suffix
+            .replacingOccurrences(of: "<FIELDNAME>", with: fieldName, options: .caseInsensitive)
+            .replacingOccurrences(of: "{{char}}", with: characterName)
+            .replacingOccurrences(of: "{{user}}", with: userName)
+
+        // Run macro replacement on the value itself
+        let processedValue = substituteParamsForCharacter(trimmed, characterName: characterName)
+
+        return processedPrefix + processedValue + processedSuffix
+    }
+
+    /// Substitute params for a specific character (used in group card joining)
+    private func substituteParamsForCharacter(_ text: String, characterName: String) -> String {
+        var result = text
+        result = result.replacingOccurrences(of: "{{char}}", with: characterName)
+        result = result.replacingOccurrences(of: "{{Char}}", with: characterName)
+        result = result.replacingOccurrences(of: "{{CHARACTER}}", with: characterName)
+
+        let userName = personaName ?? "User"
+        result = result.replacingOccurrences(of: "{{user}}", with: userName)
+        result = result.replacingOccurrences(of: "{{User}}", with: userName)
+        result = result.replacingOccurrences(of: "{{USER}}", with: userName)
+
+        return result
     }
 
     /// Build world info entries that match the current chat context.
@@ -509,6 +724,8 @@ struct PromptBuilder {
     }
 
     /// Build chat history with absolute prompt injection.
+    /// Matches SillyTavern's populationInjectionPrompts: groups by depth, then by order (high to low),
+    /// then by role priority (system, user, assistant).
     private func buildChatHistory(
         chatHistory: [LLMMessage],
         absolutePrompts: [PromptEntry],
@@ -518,14 +735,10 @@ struct PromptBuilder {
         var remainingBudget = tokenBudget
         var trimmedCount = 0
 
-        // Sort absolute prompts by depth (higher depth = inserted earlier)
-        let sortedAbsolute = absolutePrompts.sorted { $0.injectionDepth > $1.injectionDepth }
-
         // Process chat history from newest to oldest
         var historyMessages: [(index: Int, message: LLMMessage, tokens: Int)] = []
 
         for (index, message) in chatHistory.enumerated().reversed() {
-            // Message already has correct role, just need to add name if missing
             let messageText = message.content.textValue
             let llmMessage = LLMMessage(
                 role: message.role,
@@ -537,11 +750,11 @@ struct PromptBuilder {
         }
 
         // Add messages that fit within budget (newest first, then reverse)
-        var includedMessages: [(index: Int, message: LLMMessage)] = []
+        var includedMessages: [LLMMessage] = []
 
-        for (index, message, tokens) in historyMessages {
+        for (_, message, tokens) in historyMessages {
             if tokens <= remainingBudget {
-                includedMessages.append((index, message))
+                includedMessages.append(message)
                 remainingBudget -= tokens
             } else {
                 trimmedCount += 1
@@ -551,23 +764,55 @@ struct PromptBuilder {
         // Reverse to get chronological order
         includedMessages.reverse()
 
-        // Insert absolute prompts at their specified depths
-        // Depth is counted from the end (0 = last message, 1 = second to last, etc.)
-        for prompt in sortedAbsolute where !prompt.content.isEmpty {
-            let depth = prompt.injectionDepth
-            let insertIndex = max(0, includedMessages.count - depth)
+        // Build injection messages grouped by depth, order, and role (matches SillyTavern's populationInjectionPrompts)
+        let maxDepth = absolutePrompts.map(\.injectionDepth).max() ?? 0
+        var totalInserted = 0
 
-            let tokens = tokenCounter(prompt.content)
-            if tokens <= remainingBudget {
-                let llmMessage = LLMMessage(role: prompt.role, content: prompt.content)
-                includedMessages.insert((insertIndex, llmMessage), at: insertIndex)
-                remainingBudget -= tokens
+        for depth in 0...maxDepth {
+            let depthPrompts = absolutePrompts.filter { $0.injectionDepth == depth && !$0.content.isEmpty }
+            guard !depthPrompts.isEmpty else { continue }
+
+            // Group by injection order
+            var orderGroups: [Int: [PromptEntry]] = [:]
+            for prompt in depthPrompts {
+                let order = prompt.injectionOrder
+                orderGroups[order, default: []].append(prompt)
+            }
+
+            // Process order groups from high to low (100 before 50, etc.)
+            let orders = orderGroups.keys.sorted(by: >)
+            var roleMessages: [LLMMessage] = []
+
+            for order in orders {
+                guard let orderPrompts = orderGroups[order] else { continue }
+
+                // Process by role priority: system, user, assistant
+                let rolePriority: [PromptRole] = [.system, .user, .assistant]
+                for role in rolePriority {
+                    let roleContent = orderPrompts
+                        .filter { $0.role == role }
+                        .map { substituteParams($0.content) }
+                        .joined(separator: "\n")
+
+                    if !roleContent.isEmpty {
+                        let tokens = tokenCounter(roleContent)
+                        if tokens <= remainingBudget {
+                            roleMessages.append(LLMMessage(role: role, content: roleContent))
+                            remainingBudget -= tokens
+                        }
+                    }
+                }
+            }
+
+            // Insert at the correct depth position
+            if !roleMessages.isEmpty {
+                let insertIndex = min(depth + totalInserted, includedMessages.count)
+                includedMessages.insert(contentsOf: roleMessages, at: insertIndex)
+                totalInserted += roleMessages.count
             }
         }
 
-        let messages = includedMessages.map { $0.message }
-
-        return (messages, trimmedCount)
+        return (includedMessages, trimmedCount)
     }
 
     /// Substitute common parameters in a string.
