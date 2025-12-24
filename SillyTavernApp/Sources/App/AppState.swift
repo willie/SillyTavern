@@ -537,13 +537,102 @@ final class SettingsStore {
 
     // Model Settings
     var model: String = "gpt-4o" {
-        didSet { defaults.set(model, forKey: "settings.model") }
+        didSet {
+            defaults.set(model, forKey: "settings.model")
+            if autoContextSize {
+                updateContextForModel()
+            }
+        }
+    }
+    var autoContextSize: Bool = true {
+        didSet {
+            defaults.set(autoContextSize, forKey: "settings.autoContextSize")
+            if autoContextSize {
+                updateContextForModel()
+            }
+        }
     }
     var maxContextTokens: Int = 8192 {
         didSet { defaults.set(maxContextTokens, forKey: "settings.maxContextTokens") }
     }
     var maxResponseTokens: Int = 1024 {
         didSet { defaults.set(maxResponseTokens, forKey: "settings.maxResponseTokens") }
+    }
+
+    /// Update maxContextTokens based on the current model
+    private func updateContextForModel() {
+        if let contextLength = Self.contextLength(for: model) {
+            maxContextTokens = contextLength
+        }
+    }
+
+    /// Look up context length for a model ID
+    static func contextLength(for modelId: String) -> Int? {
+        let id = modelId.lowercased()
+
+        // Claude models
+        if id.contains("claude") {
+            return 200_000
+        }
+
+        // OpenAI models
+        if id.contains("gpt-4o") || id.contains("gpt-4-turbo") {
+            return 128_000
+        }
+        if id.contains("gpt-4") && !id.contains("turbo") {
+            return 8_192
+        }
+        if id.contains("gpt-3.5") {
+            return 16_385
+        }
+        if id.contains("o1") || id.contains("o3") {
+            return 200_000
+        }
+
+        // Gemini models
+        if id.contains("gemini-2.5-pro") || id.contains("gemini-1.5-pro") {
+            return 2_000_000
+        }
+        if id.contains("gemini") {
+            return 1_000_000
+        }
+
+        // Mistral models
+        if id.contains("codestral") {
+            return 256_000
+        }
+        if id.contains("mistral-large") || id.contains("mistral-medium") || id.contains("pixtral") || id.contains("ministral") {
+            return 128_000
+        }
+        if id.contains("mistral-small") {
+            return 32_000
+        }
+        if id.contains("mixtral-8x22b") {
+            return 65_536
+        }
+        if id.contains("mixtral") {
+            return 32_000
+        }
+
+        // Llama models
+        if id.contains("llama-3.1") || id.contains("llama-3.2") || id.contains("llama-3.3") {
+            return 131_072
+        }
+        if id.contains("llama") {
+            return 8_192
+        }
+
+        // DeepSeek
+        if id.contains("deepseek") {
+            return 128_000
+        }
+
+        // Qwen
+        if id.contains("qwen") {
+            return 128_000
+        }
+
+        return nil
     }
 
     // Generation Settings
@@ -619,6 +708,9 @@ final class SettingsStore {
         }
         if let savedModel = defaults.string(forKey: "settings.model") {
             model = savedModel
+        }
+        if defaults.object(forKey: "settings.autoContextSize") != nil {
+            autoContextSize = defaults.bool(forKey: "settings.autoContextSize")
         }
         if defaults.object(forKey: "settings.maxContextTokens") != nil {
             maxContextTokens = defaults.integer(forKey: "settings.maxContextTokens")

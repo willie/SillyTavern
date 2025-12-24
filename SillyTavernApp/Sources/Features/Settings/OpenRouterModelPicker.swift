@@ -82,12 +82,9 @@ struct OpenRouterModelPicker: View {
     private func modelRow(_ model: OpenRouterModel) -> some View {
         Button {
             appState.settings.model = model.id
-            // Update max context to match model
-            if model.contextLength > 0 {
-                appState.settings.maxContextTokens = min(
-                    appState.settings.maxContextTokens,
-                    model.contextLength
-                )
+            // Use exact context from OpenRouter API (more accurate than static lookup)
+            if model.contextLength > 0 && appState.settings.autoContextSize {
+                appState.settings.maxContextTokens = model.contextLength
             }
             dismiss()
         } label: {

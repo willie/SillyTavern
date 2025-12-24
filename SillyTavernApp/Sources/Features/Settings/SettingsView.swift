@@ -121,10 +121,17 @@ struct ModelSettingsTab: View {
             }
 
             Section("Context") {
-                Stepper("Max Context: \(TokenCounter.format(settings.maxContextTokens))",
-                        value: $settings.maxContextTokens,
-                        in: 1024...200000,
-                        step: 1024)
+                Toggle("Auto-detect from model", isOn: $settings.autoContextSize)
+
+                if settings.autoContextSize {
+                    LabeledContent("Max Context", value: TokenCounter.format(settings.maxContextTokens))
+                        .foregroundStyle(.secondary)
+                } else {
+                    Stepper("Max Context: \(TokenCounter.format(settings.maxContextTokens))",
+                            value: $settings.maxContextTokens,
+                            in: 1024...2_000_000,
+                            step: 1024)
+                }
 
                 Stepper("Max Response: \(TokenCounter.format(settings.maxResponseTokens))",
                         value: $settings.maxResponseTokens,
