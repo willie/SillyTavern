@@ -171,10 +171,13 @@ struct GroupContext {
             }
 
             if let depthPrompt = member.depth_prompt, !depthPrompt.prompt.isEmpty {
+                // Substitute {{char}} with this member's name at collection time
+                // (not the current speaker). {{user}} will be substituted later by PromptBuilder.
+                let substitutedContent = substituteCharMacro(depthPrompt.prompt, characterName: member.name)
                 prompts.append(PromptEntry(
                     identifier: "memberDepthPrompt_\(member.name)",
                     role: PromptRole(rawValue: depthPrompt.role) ?? .system,
-                    content: depthPrompt.prompt,
+                    content: substitutedContent,
                     injectionPosition: .absolute,
                     injectionDepth: depthPrompt.depth,
                     injectionOrder: 100
@@ -183,6 +186,15 @@ struct GroupContext {
         }
 
         return prompts
+    }
+
+    /// Substitute {{char}} macro with a specific character name
+    private func substituteCharMacro(_ text: String, characterName: String) -> String {
+        var result = text
+        result = result.replacingOccurrences(of: "{{char}}", with: characterName)
+        result = result.replacingOccurrences(of: "{{Char}}", with: characterName)
+        result = result.replacingOccurrences(of: "{{CHARACTER}}", with: characterName)
+        return result
     }
 }
 
@@ -205,18 +217,24 @@ struct BuiltPrompt: Sendable {
 
 /// Assembles prompts for chat completion based on SillyTavern's logic.
 ///
-/// Prompt order (from original openai.js):
+/// This follows the hardcoded assembly order from openai.js `populateChatCompletion()`,
+/// NOT the user-customizable PromptManager order (which SillyTavern uses for UI ordering).
+///
+/// Assembly order:
 /// 1. worldInfoBefore
-/// 2. main (system prompt)
+/// 2. main (system prompt, can be overridden by character.system_prompt)
 /// 3. worldInfoAfter
 /// 4. charDescription (joined for group APPEND modes)
 /// 5. charPersonality (joined for group APPEND modes)
 /// 6. scenario (joined for group APPEND modes, respects chat_metadata override)
 /// 7. personaDescription
-/// 8. nsfw, jailbreak
-/// 9. User prompts
-/// 10. Chat history (with absolute prompts injected at depth by order/role priority)
-/// 11. Control prompts (impersonate, quietPrompt) - always last
+/// 8. nsfw
+/// 9. dialogueExamples (mes_example)
+/// 10. jailbreak
+/// 11. Depth prompts (absolute position injection)
+/// 12. Extension prompts (summary, author's note, vectors)
+/// 13. Chat history (with absolute prompts injected at depth by order/role priority)
+/// 14. Control prompts (impersonate, groupNudge, quietPrompt) - always last
 struct PromptBuilder {
     let character: CharacterCard
     let settings: PromptSettings
@@ -300,14 +318,6 @@ struct PromptBuilder {
             ))
         }
 
-        // Add mes_examples if present (after scenario, before persona)
-        if !mesExamples.isEmpty {
-            prompts.append(PromptEntry(
-                identifier: "mesExamples",
-                content: mesExamples
-            ))
-        }
-
         // 7. Persona description
         if let persona = personaDescription, !persona.isEmpty {
             prompts.append(PromptEntry(
@@ -325,7 +335,15 @@ struct PromptBuilder {
             ))
         }
 
-        // 9. Jailbreak prompt - can be overridden by character
+        // 9. Dialogue examples (after nsfw, before jailbreak per SillyTavern default order)
+        if !mesExamples.isEmpty {
+            prompts.append(PromptEntry(
+                identifier: "dialogueExamples",
+                content: mesExamples
+            ))
+        }
+
+        // 10. Jailbreak prompt - can be overridden by character
         let jailbreakContent = resolveJailbreakPrompt()
         if !jailbreakContent.isEmpty {
             prompts.append(PromptEntry(
@@ -335,7 +353,7 @@ struct PromptBuilder {
             ))
         }
 
-        // 10. Depth prompts (from character or all group members)
+        // 11. Depth prompts (from character or all group members)
         if let groupContext = groupContext, groupContext.group.generationMode.joinsCards {
             // Group APPEND modes: collect depth prompts from all eligible members
             absolutePrompts.append(contentsOf: groupContext.collectDepthPrompts())
@@ -351,7 +369,7 @@ struct PromptBuilder {
             ))
         }
 
-        // 11. Extension prompts (summary, author's note, vectors)
+        // 12. Extension prompts (summary, author's note, vectors)
         if let summary = extensionPrompts.summary, summary.enabled, !summary.value.isEmpty {
             absolutePrompts.append(PromptEntry(
                 identifier: "summary",
@@ -779,8 +797,9 @@ struct PromptBuilder {
                 orderGroups[order, default: []].append(prompt)
             }
 
-            // Process order groups from high to low (100 before 50, etc.)
-            let orders = orderGroups.keys.sorted(by: >)
+            // Process order groups from low to high so higher orders end up later in
+            // the final array (matching SillyTavern's behavior after its array reversal)
+            let orders = orderGroups.keys.sorted(by: <)
             var roleMessages: [LLMMessage] = []
 
             for order in orders {
@@ -804,9 +823,10 @@ struct PromptBuilder {
                 }
             }
 
-            // Insert at the correct depth position
+            // Insert at the correct depth position (depth counted from newest message)
+            // SillyTavern counts depth from the END: depth 0 = after newest, depth 1 = one before newest
             if !roleMessages.isEmpty {
-                let insertIndex = min(depth + totalInserted, includedMessages.count)
+                let insertIndex = max(0, includedMessages.count - depth - totalInserted)
                 includedMessages.insert(contentsOf: roleMessages, at: insertIndex)
                 totalInserted += roleMessages.count
             }

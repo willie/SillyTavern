@@ -275,6 +275,16 @@ final class ChatState {
             promptBuilder.personaName = personaName
             promptBuilder.personaDescription = personaDescription.isEmpty ? nil : personaDescription
 
+            // Wire up group context for APPEND/APPEND_DISABLED modes
+            if isGroupChat, let group = group, let speaker = currentSpeaker {
+                promptBuilder.groupContext = GroupContext(
+                    group: group,
+                    members: group.resolvedMembers,
+                    currentSpeaker: speaker,
+                    chatMetadata: chatFile.chat_metadata.asDictionary
+                )
+            }
+
             // Use custom tokenizer if provided, else use provider's
             let tokenCounter: @Sendable (String) -> Int = { [tokenizer, model] text in
                 if let tokenizer = tokenizer {

@@ -275,6 +275,11 @@ struct ChatMetadata: Codable, Equatable {
         set { rawJSON[key] = newValue }
     }
 
+    /// Access the raw JSON dictionary (for passing to GroupContext)
+    var asDictionary: [String: JSONValue] {
+        rawJSON
+    }
+
     // MARK: - Initialization
 
     init(integrity: String? = nil, note: String? = nil) {
