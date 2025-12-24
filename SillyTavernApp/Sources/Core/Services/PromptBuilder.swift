@@ -805,8 +805,10 @@ struct PromptBuilder {
             for order in orders {
                 guard let orderPrompts = orderGroups[order] else { continue }
 
-                // Process by role priority: system, user, assistant
-                let rolePriority: [PromptRole] = [.system, .user, .assistant]
+                // Process roles in reverse order (assistant, user, system) so that after
+                // appending to roleMessages, the final order matches SillyTavern's post-reversal
+                // result where system messages end up last within a depth/order group
+                let rolePriority: [PromptRole] = [.assistant, .user, .system]
                 for role in rolePriority {
                     let roleContent = orderPrompts
                         .filter { $0.role == role }
