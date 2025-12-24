@@ -403,6 +403,7 @@ struct ChatDetailView_macOS: View {
                         MessageBubble_macOS(
                             message: message,
                             isLatest: message.id == appState.chatState.messages.last?.id && !message.is_user,
+                            isGenerating: appState.chatState.isGenerating,
                             onEdit: { msg in
                                 editingMessage = msg
                             },
@@ -621,6 +622,7 @@ struct GroupChatDetailView_macOS: View {
                         MessageBubble_macOS(
                             message: message,
                             isLatest: message.id == appState.chatState.messages.last?.id && !message.is_user,
+                            isGenerating: appState.chatState.isGenerating,
                             onEdit: { msg in
                                 editingMessage = msg
                             },
@@ -809,6 +811,7 @@ struct InspectorView: View {
 struct MessageBubble_macOS: View {
     @Bindable var message: ChatMessage
     var isLatest: Bool = false
+    var isGenerating: Bool = false
     var onEdit: ((ChatMessage) -> Void)?
     var onDelete: ((ChatMessage) -> Void)?
     var onRegenerate: ((ChatMessage) -> Void)?
@@ -866,12 +869,18 @@ struct MessageBubble_macOS: View {
                                         message.nextSwipe()
                                     }
                                 } label: {
-                                    Image(systemName: "chevron.right")
-                                        .font(.caption2)
+                                    if isGenerating && isLatest {
+                                        ProgressView()
+                                            .scaleEffect(0.5)
+                                            .frame(width: 12, height: 12)
+                                    } else {
+                                        Image(systemName: "chevron.right")
+                                            .font(.caption2)
+                                    }
                                 }
                                 .buttonStyle(.plain)
-                                .disabled(!isLatest && isOnLastSwipe)
-                                .opacity(isLatest || !isOnLastSwipe ? 1 : 0.3)
+                                .disabled(isGenerating || (!isLatest && isOnLastSwipe))
+                                .opacity((isLatest || !isOnLastSwipe) && !isGenerating ? 1 : 0.3)
                                 .accessibilityLabel(isOnLastSwipe ? "Generate new response" : "Next response")
 
                                 // Regenerate button (only on latest)
@@ -883,6 +892,8 @@ struct MessageBubble_macOS: View {
                                             .font(.caption2)
                                     }
                                     .buttonStyle(.plain)
+                                    .disabled(isGenerating)
+                                    .opacity(isGenerating ? 0.3 : 1)
                                     .accessibilityLabel("Regenerate response")
                                 }
                             }
