@@ -402,6 +402,7 @@ struct ChatDetailView_macOS: View {
                     ForEach(appState.chatState.messages) { message in
                         MessageBubble_macOS(
                             message: message,
+                            isLatest: message.id == appState.chatState.messages.last?.id && !message.is_user,
                             onEdit: { msg in
                                 editingMessage = msg
                             },
@@ -418,6 +419,9 @@ struct ChatDetailView_macOS: View {
                                         await appState.chatState.regenerateFrom(index: index)
                                     }
                                 }
+                            },
+                            onSwipe: {
+                                Task { await appState.chatState.swipe() }
                             }
                         )
                         .id(message.id)
@@ -616,6 +620,7 @@ struct GroupChatDetailView_macOS: View {
                     ForEach(appState.chatState.messages) { message in
                         MessageBubble_macOS(
                             message: message,
+                            isLatest: message.id == appState.chatState.messages.last?.id && !message.is_user,
                             onEdit: { msg in
                                 editingMessage = msg
                             },
@@ -632,6 +637,9 @@ struct GroupChatDetailView_macOS: View {
                                         await appState.chatState.regenerateFrom(index: index)
                                     }
                                 }
+                            },
+                            onSwipe: {
+                                Task { await appState.chatState.swipe() }
                             }
                         )
                         .id(message.id)
@@ -800,9 +808,22 @@ struct InspectorView: View {
 
 struct MessageBubble_macOS: View {
     @Bindable var message: ChatMessage
+    var isLatest: Bool = false
     var onEdit: ((ChatMessage) -> Void)?
     var onDelete: ((ChatMessage) -> Void)?
     var onRegenerate: ((ChatMessage) -> Void)?
+    var onSwipe: (() -> Void)?
+
+    /// Whether to show swipe/regen controls (latest character message or has swipes)
+    private var showControls: Bool {
+        !message.is_user && (isLatest || message.hasSwipes)
+    }
+
+    /// Whether we're on the last swipe (right chevron should generate new)
+    private var isOnLastSwipe: Bool {
+        let currentIndex = message.swipe_id ?? 0
+        return currentIndex >= message.swipeCount - 1
+    }
 
     var body: some View {
         HStack {
@@ -816,9 +837,10 @@ struct MessageBubble_macOS: View {
                             .font(.caption)
                             .foregroundStyle(.secondary)
 
-                        // Swipe navigation
-                        if message.hasSwipes {
+                        // Swipe navigation and controls
+                        if showControls {
                             HStack(spacing: 4) {
+                                // Left chevron - previous swipe (disabled if no swipes or at first)
                                 Button {
                                     message.previousSwipe()
                                 } label: {
@@ -826,21 +848,43 @@ struct MessageBubble_macOS: View {
                                         .font(.caption2)
                                 }
                                 .buttonStyle(.plain)
+                                .disabled(!message.hasSwipes || (message.swipe_id ?? 0) == 0)
+                                .opacity(message.hasSwipes && (message.swipe_id ?? 0) > 0 ? 1 : 0.3)
                                 .accessibilityLabel("Previous response")
 
+                                // Swipe count
                                 Text("\((message.swipe_id ?? 0) + 1)/\(message.swipeCount)")
                                     .font(.caption2)
                                     .monospacedDigit()
                                     .accessibilityLabel("Response \((message.swipe_id ?? 0) + 1) of \(message.swipeCount)")
 
+                                // Right chevron - next swipe or generate new
                                 Button {
-                                    message.nextSwipe()
+                                    if isOnLastSwipe {
+                                        onSwipe?()
+                                    } else {
+                                        message.nextSwipe()
+                                    }
                                 } label: {
                                     Image(systemName: "chevron.right")
                                         .font(.caption2)
                                 }
                                 .buttonStyle(.plain)
-                                .accessibilityLabel("Next response")
+                                .disabled(!isLatest && isOnLastSwipe)
+                                .opacity(isLatest || !isOnLastSwipe ? 1 : 0.3)
+                                .accessibilityLabel(isOnLastSwipe ? "Generate new response" : "Next response")
+
+                                // Regenerate button (only on latest)
+                                if isLatest {
+                                    Button {
+                                        onRegenerate?(message)
+                                    } label: {
+                                        Image(systemName: "arrow.clockwise")
+                                            .font(.caption2)
+                                    }
+                                    .buttonStyle(.plain)
+                                    .accessibilityLabel("Regenerate response")
+                                }
                             }
                             .padding(.horizontal, 6)
                             .padding(.vertical, 2)

@@ -140,6 +140,7 @@ struct GroupContext {
     let members: [CharacterCard]        // All resolved members
     let currentSpeaker: CharacterCard   // Character generating this message
     let chatMetadata: [String: JSONValue]  // For scenario/mes_example overrides
+    let personaName: String?
 
     /// Get members to include in card joining based on generation mode
     func membersForCardJoin() -> [CharacterCard] {
@@ -171,9 +172,8 @@ struct GroupContext {
             }
 
             if let depthPrompt = member.depth_prompt, !depthPrompt.prompt.isEmpty {
-                // Substitute {{char}} with this member's name at collection time
-                // (not the current speaker). {{user}} will be substituted later by PromptBuilder.
-                let substitutedContent = substituteCharMacro(depthPrompt.prompt, characterName: member.name)
+                // Substitute macros with this member's name (not the current speaker).
+                let substitutedContent = substituteParamsForMember(depthPrompt.prompt, characterName: member.name)
                 prompts.append(PromptEntry(
                     identifier: "memberDepthPrompt_\(member.name)",
                     role: PromptRole(rawValue: depthPrompt.role) ?? .system,
@@ -188,12 +188,31 @@ struct GroupContext {
         return prompts
     }
 
-    /// Substitute {{char}} macro with a specific character name
-    private func substituteCharMacro(_ text: String, characterName: String) -> String {
+    /// Substitute macros with a specific character name (group depth prompts).
+    private func substituteParamsForMember(_ text: String, characterName: String) -> String {
         var result = text
         result = result.replacingOccurrences(of: "{{char}}", with: characterName)
         result = result.replacingOccurrences(of: "{{Char}}", with: characterName)
         result = result.replacingOccurrences(of: "{{CHARACTER}}", with: characterName)
+
+        let userName = personaName ?? "User"
+        result = result.replacingOccurrences(of: "{{user}}", with: userName)
+        result = result.replacingOccurrences(of: "{{User}}", with: userName)
+        result = result.replacingOccurrences(of: "{{USER}}", with: userName)
+
+        // Date/time (basic support)
+        let formatter = DateFormatter()
+        formatter.dateFormat = "MMMM d, yyyy"
+        result = result.replacingOccurrences(of: "{{date}}", with: formatter.string(from: Date()))
+
+        formatter.dateFormat = "h:mm a"
+        result = result.replacingOccurrences(of: "{{time}}", with: formatter.string(from: Date()))
+
+        // Random number
+        if result.contains("{{random}}") {
+            result = result.replacingOccurrences(of: "{{random}}", with: String(Int.random(in: 1...100)))
+        }
+
         return result
     }
 }
@@ -621,15 +640,15 @@ struct PromptBuilder {
         guard !trimmed.isEmpty else { return "" }
 
         // Replace <FIELDNAME> in prefix/suffix and run macro replacement
-        let processedPrefix = prefix
-            .replacingOccurrences(of: "<FIELDNAME>", with: fieldName, options: .caseInsensitive)
-            .replacingOccurrences(of: "{{char}}", with: characterName)
-            .replacingOccurrences(of: "{{user}}", with: userName)
+        let processedPrefix = substituteParamsForCharacter(
+            prefix.replacingOccurrences(of: "<FIELDNAME>", with: fieldName, options: .caseInsensitive),
+            characterName: characterName
+        )
 
-        let processedSuffix = suffix
-            .replacingOccurrences(of: "<FIELDNAME>", with: fieldName, options: .caseInsensitive)
-            .replacingOccurrences(of: "{{char}}", with: characterName)
-            .replacingOccurrences(of: "{{user}}", with: userName)
+        let processedSuffix = substituteParamsForCharacter(
+            suffix.replacingOccurrences(of: "<FIELDNAME>", with: fieldName, options: .caseInsensitive),
+            characterName: characterName
+        )
 
         // Run macro replacement on the value itself
         let processedValue = substituteParamsForCharacter(trimmed, characterName: characterName)
@@ -648,6 +667,19 @@ struct PromptBuilder {
         result = result.replacingOccurrences(of: "{{user}}", with: userName)
         result = result.replacingOccurrences(of: "{{User}}", with: userName)
         result = result.replacingOccurrences(of: "{{USER}}", with: userName)
+
+        // Date/time (basic support)
+        let formatter = DateFormatter()
+        formatter.dateFormat = "MMMM d, yyyy"
+        result = result.replacingOccurrences(of: "{{date}}", with: formatter.string(from: Date()))
+
+        formatter.dateFormat = "h:mm a"
+        result = result.replacingOccurrences(of: "{{time}}", with: formatter.string(from: Date()))
+
+        // Random number
+        if result.contains("{{random}}") {
+            result = result.replacingOccurrences(of: "{{random}}", with: String(Int.random(in: 1...100)))
+        }
 
         return result
     }
@@ -742,8 +774,8 @@ struct PromptBuilder {
     }
 
     /// Build chat history with absolute prompt injection.
-    /// Matches SillyTavern's populationInjectionPrompts: groups by depth, then by order (high to low),
-    /// then by role priority (system, user, assistant).
+    /// Matches SillyTavern's populationInjectionPrompts: groups by depth, then by order (low to high),
+    /// then by role priority (assistant, user, system) to reflect post-reversal ordering.
     private func buildChatHistory(
         chatHistory: [LLMMessage],
         absolutePrompts: [PromptEntry],

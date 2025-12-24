@@ -281,7 +281,8 @@ final class ChatState {
                     group: group,
                     members: group.resolvedMembers,
                     currentSpeaker: speaker,
-                    chatMetadata: chatFile.chat_metadata.asDictionary
+                    chatMetadata: chatFile.chat_metadata.asDictionary,
+                    personaName: personaName
                 )
             }
 
