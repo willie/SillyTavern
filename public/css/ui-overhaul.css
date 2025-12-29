@@ -679,10 +679,11 @@ select.text_pole {
 /* ===================
  * DROPDOWN MENU
  * Grouped actions with labels
+ * Hidden by default, shown on click via JS
  * =================== */
 
 .extraMesButtons {
-    display: flex;
+    /* Keep hidden by default - JS toggles visibility */
     flex-direction: column;
     gap: var(--space-1);
     padding: var(--space-2);
@@ -694,6 +695,13 @@ select.text_pole {
     backdrop-filter: blur(10px);
 }
 
+/* When dropdown is shown, use column layout */
+.extraMesButtons[style*="display: flex"],
+.extraMesButtons[style*="display:flex"],
+body.expandMessageActions .extraMesButtons {
+    flex-direction: column;
+}
+
 /* Action groups */
 .extraMesButtons_group {
     display: flex;
@@ -702,7 +710,8 @@ select.text_pole {
     padding: var(--space-1) 0;
 }
 
-.extraMesButtons_group:not(:last-child) {
+/* Separator between groups - use last-of-type to ignore .mes_prompt sibling */
+.extraMesButtons_group:not(:last-of-type) {
     border-bottom: 1px solid var(--SmartThemeBorderColor);
     padding-bottom: var(--space-2);
 }
