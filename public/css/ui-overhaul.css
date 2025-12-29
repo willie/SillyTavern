@@ -617,143 +617,200 @@ select.text_pole {
     background-color: var(--white20a);
 }
 
-/* Extra message buttons container */
+/* ===================
+ * MAIN MESSAGE BUTTONS
+ * Primary actions always visible
+ * =================== */
+
+.mes_buttons {
+    display: flex;
+    align-items: center;
+    gap: var(--space-2);
+}
+
+/* All primary buttons */
+.mes_buttons > .mes_button {
+    opacity: 0.6;
+    padding: var(--space-1);
+    border-radius: var(--radius-sm);
+    transition: var(--transition-all);
+}
+
+.mes_buttons > .mes_button:hover {
+    opacity: 1;
+    background-color: var(--white10a);
+}
+
+/* Copy button - primary action */
+.mes_buttons .mes_copy {
+    opacity: 0.7;
+}
+
+.mes_buttons .mes_copy:hover {
+    color: var(--SmartThemeQuoteColor);
+}
+
+/* Edit button */
+.mes_buttons .mes_edit:hover {
+    color: var(--SmartThemeQuoteColor);
+}
+
+/* Delete button - red accent */
+.mes_buttons .mes_delete {
+    color: var(--fullred);
+    opacity: 0.5;
+}
+
+.mes_buttons .mes_delete:hover {
+    opacity: 1;
+    background-color: color-mix(in srgb, var(--fullred) 20%, transparent);
+}
+
+/* Bookmark button - accent when active */
+.mes_buttons .mes_bookmark {
+    color: var(--SmartThemeQuoteColor);
+}
+
+/* More actions trigger */
+.mes_buttons .extraMesButtonsHint {
+    opacity: 0.5;
+}
+
+/* ===================
+ * DROPDOWN MENU
+ * Grouped actions with labels
+ * =================== */
+
 .extraMesButtons {
     display: flex;
-    flex-wrap: wrap;
+    flex-direction: column;
     gap: var(--space-1);
     padding: var(--space-2);
     background-color: var(--SmartThemeBlurTintColor);
     border: 1px solid var(--SmartThemeBorderColor);
     border-radius: var(--radius-md);
     box-shadow: var(--shadow-lg);
-    min-width: 200px;
-    max-width: 280px;
+    min-width: 160px;
+    backdrop-filter: blur(10px);
+}
+
+/* Action groups */
+.extraMesButtons_group {
+    display: flex;
+    flex-wrap: wrap;
+    gap: var(--space-1);
+    padding: var(--space-1) 0;
+}
+
+.extraMesButtons_group:not(:last-child) {
+    border-bottom: 1px solid var(--SmartThemeBorderColor);
+    padding-bottom: var(--space-2);
+}
+
+/* Group labels */
+.extraMesButtons_group_label {
+    width: 100%;
+    font-size: var(--text-xs);
+    font-weight: var(--font-medium);
+    color: var(--SmartThemeEmColor);
+    opacity: 0.7;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+    margin-bottom: var(--space-1);
+    padding: 0 var(--space-1);
+}
+
+/* Buttons in dropdown */
+.extraMesButtons .mes_button {
+    padding: var(--space-1);
+    border-radius: var(--radius-sm);
+    opacity: 0.8;
+    transition: var(--transition-all);
+}
+
+.extraMesButtons .mes_button:hover {
+    opacity: 1;
+    background-color: var(--white10a);
 }
 
 /* ===================
- * MESSAGE ACTION GROUPS
- * Organized by function using CSS order
+ * EDIT MODE BUTTONS
+ * Clean grouped layout with separators
  * =================== */
 
-/* Group 1: Primary Actions (Copy) - order 1 */
-.extraMesButtons .mes_copy {
-    order: 1;
-}
-
-/* Visual separator after primary actions */
-.extraMesButtons .mes_copy::after {
-    content: '';
-    position: absolute;
-    right: -6px;
-    top: 2px;
-    bottom: 2px;
-    width: 1px;
-    background-color: var(--SmartThemeBorderColor);
-    opacity: 0.5;
-}
-
-.extraMesButtons .mes_copy {
-    position: relative;
-    margin-right: var(--space-2);
-}
-
-/* Group 2: AI Context (Hide/Unhide) - order 2 */
-.extraMesButtons .mes_hide,
-.extraMesButtons .mes_unhide {
-    order: 2;
-}
-
-/* Visual separator after AI context */
-.extraMesButtons .mes_unhide::after,
-.extraMesButtons .mes_hide:last-of-type::after {
-    content: '';
-    position: absolute;
-    right: -6px;
-    top: 2px;
-    bottom: 2px;
-    width: 1px;
-    background-color: var(--SmartThemeBorderColor);
-    opacity: 0.5;
-}
-
-.extraMesButtons .mes_hide,
-.extraMesButtons .mes_unhide {
-    position: relative;
-}
-
-.extraMesButtons .mes_unhide {
-    margin-right: var(--space-2);
-}
-
-/* Group 3: Media/Content (Translate, Narrate, Image, Embed, Media toggles) - order 3 */
-.extraMesButtons .mes_translate,
-.extraMesButtons .mes_narrate,
-.extraMesButtons .sd_message_gen,
-.extraMesButtons .mes_embed,
-.extraMesButtons .mes_media_gallery,
-.extraMesButtons .mes_media_list {
-    order: 3;
-}
-
-/* Group 4: History/Branches (Checkpoint, Branch) - order 4 */
-.extraMesButtons .mes_create_bookmark,
-.extraMesButtons .mes_create_branch {
-    order: 4;
-}
-
-/* Group 5: Hidden/Internal (Prompt debug) - order 99 */
-.extraMesButtons .mes_prompt {
-    order: 99;
-}
-
-/* Add visual group styling on hover for related buttons */
-.extraMesButtons > div {
-    position: relative;
-}
-
-/* Tooltip-style labels for button groups on first hover */
-.extraMesButtons .mes_copy[title]::before,
-.extraMesButtons .mes_hide[title]::before,
-.extraMesButtons .mes_translate[title]::before,
-.extraMesButtons .mes_create_bookmark[title]::before {
-    /* Reserved for future group labels */
-}
-
-/* ===================
- * MAIN MESSAGE BUTTONS
- * Always-visible actions outside dropdown
- * =================== */
-
-.mes_buttons {
+.mes_edit_buttons {
     display: flex;
     align-items: center;
     gap: var(--space-1);
+    padding: var(--space-2);
+    background-color: var(--black50a);
+    border-radius: var(--radius-md);
+    backdrop-filter: blur(5px);
 }
 
-/* Primary edit button - more prominent */
-.mes_buttons .mes_edit {
-    opacity: 0.8;
+/* Visual separators */
+.mes_edit_buttons_separator {
+    width: 1px;
+    height: 20px;
+    background-color: var(--SmartThemeBorderColor);
+    opacity: 0.5;
+    margin: 0 var(--space-1);
 }
 
-.mes_buttons .mes_edit:hover {
-    opacity: 1;
-    color: var(--SmartThemeQuoteColor);
-}
-
-/* Bookmark button - show checkpoint indicator */
-.mes_buttons .mes_bookmark {
-    color: var(--SmartThemeQuoteColor);
-}
-
-/* Ellipsis dropdown trigger */
-.mes_buttons .extraMesButtonsHint {
-    opacity: 0.6;
+/* Save button - prominent green */
+.mes_edit_buttons .mes_edit_done {
+    color: var(--active);
+    background-color: color-mix(in srgb, var(--active) 20%, transparent);
     padding: var(--space-1) var(--space-2);
+    border-radius: var(--radius-sm);
 }
 
-.mes_buttons .extraMesButtonsHint:hover {
+.mes_edit_buttons .mes_edit_done:hover {
+    background-color: color-mix(in srgb, var(--active) 35%, transparent);
+}
+
+/* Cancel button */
+.mes_edit_buttons .mes_edit_cancel {
+    color: var(--grey70);
+    padding: var(--space-1) var(--space-2);
+    border-radius: var(--radius-sm);
+}
+
+.mes_edit_buttons .mes_edit_cancel:hover {
+    color: var(--SmartThemeBodyColor);
+    background-color: var(--white10a);
+}
+
+/* Delete button - prominent red */
+.mes_edit_buttons .mes_edit_delete {
+    color: var(--fullred);
+    background-color: color-mix(in srgb, var(--fullred) 15%, transparent);
+    padding: var(--space-1) var(--space-2);
+    border-radius: var(--radius-sm);
+    border: 1px solid color-mix(in srgb, var(--fullred) 30%, transparent);
+}
+
+.mes_edit_buttons .mes_edit_delete:hover {
+    background-color: color-mix(in srgb, var(--fullred) 35%, transparent);
+    border-color: var(--fullred);
+}
+
+/* Other edit buttons */
+.mes_edit_buttons .mes_edit_copy,
+.mes_edit_buttons .mes_edit_add_reasoning,
+.mes_edit_buttons .mes_edit_up,
+.mes_edit_buttons .mes_edit_down {
+    opacity: 0.7;
+    padding: var(--space-1);
+    border-radius: var(--radius-sm);
+}
+
+.mes_edit_buttons .mes_edit_copy:hover,
+.mes_edit_buttons .mes_edit_add_reasoning:hover,
+.mes_edit_buttons .mes_edit_up:hover,
+.mes_edit_buttons .mes_edit_down:hover {
     opacity: 1;
+    background-color: var(--white10a);
 }
 
 /* ===================
@@ -891,104 +948,6 @@ select.text_pole {
     font-size: var(--text-sm);
     color: var(--SmartThemeEmColor);
     line-height: var(--leading-relaxed);
-}
-
-/* ===================
- * EDIT MODE
- * Message editing state with grouped actions
- * =================== */
-
-.mes_edit_buttons {
-    display: flex;
-    align-items: center;
-    gap: var(--space-1);
-    padding: var(--space-2);
-    background-color: var(--black50a);
-    border-radius: var(--radius-md);
-}
-
-/* Group edit buttons by function using order */
-/* Group 1: Confirm - order 1 */
-.mes_edit_buttons .mes_edit_done {
-    order: 1;
-    color: var(--active);
-    background-color: color-mix(in srgb, var(--active) 20%, transparent);
-    padding: var(--space-1) var(--space-2);
-    border-radius: var(--radius-sm);
-}
-
-.mes_edit_buttons .mes_edit_done:hover {
-    background-color: color-mix(in srgb, var(--active) 40%, transparent);
-}
-
-/* Group 2: Content actions - order 2 */
-.mes_edit_buttons .mes_edit_copy,
-.mes_edit_buttons .mes_edit_add_reasoning {
-    order: 2;
-}
-
-/* Separator between content and destructive */
-.mes_edit_buttons .mes_edit_add_reasoning {
-    position: relative;
-    margin-right: var(--space-2);
-}
-
-.mes_edit_buttons .mes_edit_add_reasoning::after {
-    content: '';
-    position: absolute;
-    right: -6px;
-    top: 2px;
-    bottom: 2px;
-    width: 1px;
-    background-color: var(--SmartThemeBorderColor);
-    opacity: 0.5;
-}
-
-/* Group 3: Delete (destructive) - order 3 */
-.mes_edit_buttons .mes_edit_delete {
-    order: 3;
-    color: var(--fullred);
-    margin-right: var(--space-2);
-    position: relative;
-}
-
-.mes_edit_buttons .mes_edit_delete::after {
-    content: '';
-    position: absolute;
-    right: -6px;
-    top: 2px;
-    bottom: 2px;
-    width: 1px;
-    background-color: var(--SmartThemeBorderColor);
-    opacity: 0.5;
-}
-
-.mes_edit_buttons .mes_edit_delete:hover {
-    background-color: color-mix(in srgb, var(--fullred) 20%, transparent);
-    border-radius: var(--radius-sm);
-}
-
-/* Group 4: Navigation (up/down) - order 4 */
-.mes_edit_buttons .mes_edit_up,
-.mes_edit_buttons .mes_edit_down {
-    order: 4;
-    opacity: 0.7;
-}
-
-.mes_edit_buttons .mes_edit_up:hover,
-.mes_edit_buttons .mes_edit_down:hover {
-    opacity: 1;
-}
-
-/* Group 5: Cancel - order 5 (always last) */
-.mes_edit_buttons .mes_edit_cancel {
-    order: 5;
-    color: var(--grey70);
-    margin-left: auto;
-}
-
-.mes_edit_buttons .mes_edit_cancel:hover {
-    color: var(--SmartThemeBodyColor);
 }
 
 /* ===================

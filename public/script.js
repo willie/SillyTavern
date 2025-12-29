@@ -11661,6 +11661,16 @@ jQuery(async function () {
         await deleteMessage(Number(this_edit_mes_id), canDeleteSwipe ? selectedSwipe : undefined, power_user.confirm_message_delete && fromSlashCommand !== true);
     });
 
+    // Direct delete button (outside edit mode)
+    $(document).on('click', '.mes_delete', async function () {
+        const messageId = Number($(this).closest('.mes').attr('mesid'));
+        const message = chat[messageId];
+        const selectedSwipe = message['swipe_id'] ?? undefined;
+        const swipesArray = Array.isArray(message['swipes']) ? message['swipes'] : [];
+        const canDeleteSwipe = power_user.confirm_message_delete && !message.is_user && swipesArray.length > 1 && messageId === chat.length - 1 && selectedSwipe !== undefined;
+        await deleteMessage(messageId, canDeleteSwipe ? selectedSwipe : undefined, power_user.confirm_message_delete);
+    });
+
     $(document).on('click', '.mes_edit_done', async function () {
         await messageEditDone($(this));
     });
