@@ -11664,6 +11664,7 @@ jQuery(async function () {
     // Direct delete button (outside edit mode)
     $(document).on('click', '.mes_delete', async function () {
         const messageId = Number($(this).closest('.mes').attr('mesid'));
+        if (!Number.isInteger(messageId) || !chat[messageId]) return;
         const message = chat[messageId];
         const selectedSwipe = message['swipe_id'] ?? undefined;
         const swipesArray = Array.isArray(message['swipes']) ? message['swipes'] : [];
