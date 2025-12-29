@@ -1,0 +1,237 @@
+/**
+ * SillyTavern Design Tokens
+ * =========================
+ * Centralized design tokens for consistent spacing, typography, and visual styling.
+ * These tokens complement the existing SmartTheme color system.
+ *
+ * Usage:
+ * - Use --space-* for margins, padding, gaps
+ * - Use --text-* for font sizes
+ * - Use --radius-* for border-radius
+ * - Use --shadow-* for box-shadow
+ * - Use --z-* for z-index layering
+ * - Use --opacity-* for opacity states
+ */
+
+:root {
+    /* ===================
+     * SPACING SCALE
+     * Based on 4px base unit
+     * =================== */
+    --space-0: 0;
+    --space-1: 4px;      /* Tight spacing, icons */
+    --space-2: 8px;      /* Default small spacing */
+    --space-3: 12px;     /* Medium spacing */
+    --space-4: 16px;     /* Standard padding */
+    --space-5: 20px;     /* Comfortable spacing */
+    --space-6: 24px;     /* Section spacing */
+    --space-8: 32px;     /* Large gaps */
+    --space-10: 40px;    /* Extra large gaps */
+    --space-12: 48px;    /* Panel spacing */
+
+    /* Semantic spacing aliases */
+    --space-xs: var(--space-1);
+    --space-sm: var(--space-2);
+    --space-md: var(--space-4);
+    --space-lg: var(--space-6);
+    --space-xl: var(--space-8);
+    --space-2xl: var(--space-12);
+
+    /* Component-specific spacing */
+    --space-button-x: var(--space-3);
+    --space-button-y: var(--space-2);
+    --space-input-x: var(--space-3);
+    --space-input-y: var(--space-2);
+    --space-card: var(--space-4);
+    --space-section: var(--space-6);
+
+    /* ===================
+     * TYPOGRAPHY SCALE
+     * Relative to base font size
+     * =================== */
+    --text-2xs: 0.625rem;   /* 10px - tiny labels */
+    --text-xs: 0.75rem;     /* 12px - small labels */
+    --text-sm: 0.875rem;    /* 14px - secondary text */
+    --text-base: 1rem;      /* 16px - body text */
+    --text-lg: 1.125rem;    /* 18px - emphasis */
+    --text-xl: 1.25rem;     /* 20px - subheadings */
+    --text-2xl: 1.5rem;     /* 24px - headings */
+    --text-3xl: 1.875rem;   /* 30px - large headings */
+
+    /* Line heights */
+    --leading-none: 1;
+    --leading-tight: 1.25;
+    --leading-snug: 1.375;
+    --leading-normal: 1.5;
+    --leading-relaxed: 1.625;
+    --leading-loose: 2;
+
+    /* Font weights */
+    --font-normal: 400;
+    --font-medium: 500;
+    --font-semibold: 600;
+    --font-bold: 700;
+
+    /* ===================
+     * BORDER RADIUS
+     * =================== */
+    --radius-none: 0;
+    --radius-sm: 4px;
+    --radius-md: 8px;
+    --radius-lg: 12px;
+    --radius-xl: 16px;
+    --radius-2xl: 24px;
+    --radius-full: 9999px;
+
+    /* Component-specific radii */
+    --radius-button: var(--radius-sm);
+    --radius-input: var(--radius-sm);
+    --radius-card: var(--radius-md);
+    --radius-panel: var(--radius-lg);
+    --radius-modal: var(--radius-xl);
+
+    /* ===================
+     * SHADOWS
+     * =================== */
+    --shadow-sm: 0 1px 2px 0 rgba(0, 0, 0, 0.05);
+    --shadow-md: 0 4px 6px -1px rgba(0, 0, 0, 0.1), 0 2px 4px -2px rgba(0, 0, 0, 0.1);
+    --shadow-lg: 0 10px 15px -3px rgba(0, 0, 0, 0.1), 0 4px 6px -4px rgba(0, 0, 0, 0.1);
+    --shadow-xl: 0 20px 25px -5px rgba(0, 0, 0, 0.1), 0 8px 10px -6px rgba(0, 0, 0, 0.1);
+    --shadow-2xl: 0 25px 50px -12px rgba(0, 0, 0, 0.25);
+
+    /* Inset shadows for inputs */
+    --shadow-inner: inset 0 2px 4px 0 rgba(0, 0, 0, 0.05);
+
+    /* Focus rings */
+    --shadow-focus: 0 0 0 2px var(--interactable-outline-color-faint);
+    --shadow-focus-strong: 0 0 0 3px var(--interactable-outline-color);
+
+    /* ===================
+     * Z-INDEX SCALE
+     * Organized in layers
+     * =================== */
+    --z-base: 0;
+    --z-above: 10;
+    --z-dropdown: 100;
+    --z-sticky: 200;
+    --z-drawer: 300;
+    --z-overlay: 400;
+    --z-modal: 500;
+    --z-popover: 600;
+    --z-tooltip: 700;
+    --z-toast: 800;
+    --z-max: 9999;
+
+    /* ===================
+     * OPACITY STATES
+     * =================== */
+    --opacity-0: 0;
+    --opacity-5: 0.05;
+    --opacity-10: 0.1;
+    --opacity-20: 0.2;
+    --opacity-30: 0.3;
+    --opacity-40: 0.4;
+    --opacity-50: 0.5;
+    --opacity-60: 0.6;
+    --opacity-70: 0.7;
+    --opacity-80: 0.8;
+    --opacity-90: 0.9;
+    --opacity-100: 1;
+
+    /* Semantic opacity */
+    --opacity-disabled: 0.5;
+    --opacity-placeholder: 0.6;
+    --opacity-muted: 0.7;
+    --opacity-hover: 0.8;
+    --opacity-subtle: 0.3;
+
+    /* ===================
+     * TRANSITIONS
+     * =================== */
+    --duration-fast: 100ms;
+    --duration-normal: 150ms;
+    --duration-slow: 300ms;
+    --duration-slower: 500ms;
+
+    --ease-default: cubic-bezier(0.4, 0, 0.2, 1);
+    --ease-in: cubic-bezier(0.4, 0, 1, 1);
+    --ease-out: cubic-bezier(0, 0, 0.2, 1);
+    --ease-in-out: cubic-bezier(0.4, 0, 0.2, 1);
+
+    /* Common transitions */
+    --transition-colors: color var(--duration-fast) var(--ease-default),
+                         background-color var(--duration-fast) var(--ease-default),
+                         border-color var(--duration-fast) var(--ease-default);
+    --transition-opacity: opacity var(--duration-fast) var(--ease-default);
+    --transition-transform: transform var(--duration-normal) var(--ease-default);
+    --transition-all: all var(--duration-normal) var(--ease-default);
+
+    /* ===================
+     * SIZING
+     * =================== */
+    /* Touch targets */
+    --size-touch-min: 44px;
+    --size-touch-comfortable: 48px;
+
+    /* Icon sizes */
+    --size-icon-xs: 12px;
+    --size-icon-sm: 16px;
+    --size-icon-md: 20px;
+    --size-icon-lg: 24px;
+    --size-icon-xl: 32px;
+
+    /* Button heights */
+    --size-button-sm: 28px;
+    --size-button-md: 36px;
+    --size-button-lg: 44px;
+
+    /* Input heights */
+    --size-input-sm: 28px;
+    --size-input-md: 36px;
+    --size-input-lg: 44px;
+
+    /* ===================
+     * BREAKPOINTS (reference)
+     * Use in media queries
+     * =================== */
+    /*
+     * --breakpoint-sm: 640px;
+     * --breakpoint-md: 768px;
+     * --breakpoint-lg: 1024px;
+     * --breakpoint-xl: 1280px;
+     * --breakpoint-2xl: 1536px;
+     */
+}
+
+/* ===================
+ * UTILITY CLASSES
+ * Common patterns using tokens
+ * =================== */
+
+/* Focus visible styles */
+.st-focus-ring:focus-visible {
+    outline: none;
+    box-shadow: var(--shadow-focus);
+}
+
+.st-focus-ring-strong:focus-visible {
+    outline: none;
+    box-shadow: var(--shadow-focus-strong);
+}
+
+/* Transition utilities */
+.st-transition-colors {
+    transition: var(--transition-colors);
+}
+
+.st-transition-opacity {
+    transition: var(--transition-opacity);
+}
+
+.st-transition-transform {
+    transition: var(--transition-transform);
+}
+
+.st-transition-all {
+    transition: var(--transition-all);
+}

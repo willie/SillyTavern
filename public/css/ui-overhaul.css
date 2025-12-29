@@ -1,0 +1,1061 @@
+/**
+ * SillyTavern UI Overhaul
+ * =======================
+ * Enhanced styles for improved visual hierarchy and UX.
+ * These styles layer on top of existing styles progressively.
+ */
+
+/* ===================
+ * TOP BAR ENHANCEMENTS
+ * =================== */
+
+#top-bar {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: var(--space-4);
+    padding: 0 var(--space-4);
+}
+
+/* Icon groups in top bar */
+.top-bar-group {
+    display: flex;
+    align-items: center;
+    gap: var(--space-1);
+    padding: var(--space-1);
+    border-radius: var(--radius-md);
+    background-color: var(--black30a);
+}
+
+/* Separator between groups */
+.top-bar-separator {
+    width: 1px;
+    height: 20px;
+    background-color: var(--SmartThemeBorderColor);
+    margin: 0 var(--space-2);
+}
+
+/* ===================
+ * DRAWER HEADER IMPROVEMENTS
+ * =================== */
+
+.drawer-toggle {
+    transition: var(--transition-colors);
+}
+
+.drawer-toggle:hover .drawer-icon {
+    opacity: 1;
+}
+
+.drawer-icon {
+    opacity: var(--opacity-muted);
+    transition: var(--transition-opacity);
+}
+
+/* ===================
+ * SECTION HEADERS IN PANELS
+ * Enhanced visual hierarchy for panel sections
+ * =================== */
+
+.standoutHeader {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: var(--space-3) var(--space-2);
+    margin-bottom: var(--space-3);
+    border-bottom: 1px solid var(--SmartThemeBorderColor);
+    background-color: var(--black30a);
+    border-radius: var(--radius-sm) var(--radius-sm) 0 0;
+}
+
+.standoutHeader strong {
+    font-size: var(--text-sm);
+    font-weight: var(--font-semibold);
+    text-transform: uppercase;
+    letter-spacing: 0.03em;
+    color: var(--SmartThemeBodyColor);
+}
+
+/* Title with restorable button group */
+.title_restorable {
+    gap: var(--space-3);
+}
+
+/* ===================
+ * INLINE DRAWER HEADERS
+ * Collapsible sections within panels
+ * =================== */
+
+.inline-drawer-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: var(--space-3);
+    margin: var(--space-2) 0;
+    background-color: var(--black30a);
+    border-radius: var(--radius-sm);
+    cursor: pointer;
+    transition: var(--transition-colors);
+    user-select: none;
+}
+
+.inline-drawer-header:hover {
+    background-color: var(--white20a);
+}
+
+.inline-drawer-header b,
+.inline-drawer-header strong {
+    font-size: var(--text-sm);
+    font-weight: var(--font-semibold);
+    color: var(--SmartThemeBodyColor);
+}
+
+.inline-drawer-icon {
+    color: var(--SmartThemeEmColor);
+    transition: transform var(--duration-normal) var(--ease-default);
+}
+
+.inline-drawer-header.openIcon .inline-drawer-icon {
+    transform: rotate(180deg);
+}
+
+.inline-drawer-content {
+    padding: var(--space-3);
+    margin-bottom: var(--space-3);
+}
+
+/* ===================
+ * BUTTON HIERARCHY
+ * Primary actions stand out, secondary recede
+ * =================== */
+
+/* Send button - primary action */
+#send_but {
+    background-color: var(--active) !important;
+    border-color: var(--active) !important;
+    color: white !important;
+    font-weight: var(--font-semibold);
+    min-width: var(--size-touch-min);
+}
+
+#send_but:hover:not(:disabled) {
+    background-color: color-mix(in srgb, var(--active) 85%, white) !important;
+    filter: none !important;
+}
+
+/* Stop button - danger action */
+#mes_stop {
+    background-color: var(--crimson70a) !important;
+    border-color: var(--fullred) !important;
+}
+
+#mes_stop:hover:not(:disabled) {
+    background-color: var(--crimson-hover) !important;
+}
+
+/* Continue and regenerate buttons - secondary */
+#mes_continue,
+#mes_regenerate,
+#mes_impersonate {
+    opacity: var(--opacity-muted);
+    transition: var(--transition-opacity);
+}
+
+#mes_continue:hover,
+#mes_regenerate:hover,
+#mes_impersonate:hover {
+    opacity: 1;
+}
+
+/* ===================
+ * RANGE INPUTS ENHANCEMENT
+ * Better visual styling for sliders
+ * =================== */
+
+.range-block {
+    padding: var(--space-2) 0;
+    border-bottom: 1px solid var(--grey5020a);
+}
+
+.range-block:last-child {
+    border-bottom: none;
+}
+
+.range-block-title {
+    font-size: var(--text-sm);
+    font-weight: var(--font-medium);
+    color: var(--SmartThemeBodyColor);
+    margin-bottom: var(--space-1);
+}
+
+/* Neo range slider styling */
+.neo-range-slider {
+    height: 6px !important;
+    border-radius: var(--radius-full) !important;
+}
+
+.neo-range-input {
+    font-size: var(--text-sm);
+    padding: var(--space-2) !important;
+}
+
+/* ===================
+ * FORM ELEMENTS
+ * Consistent styling for inputs and selects
+ * =================== */
+
+.text_pole {
+    min-height: var(--size-input-md);
+    padding: var(--space-input-y) var(--space-input-x);
+    font-size: var(--text-sm);
+    background-color: var(--black30a);
+    border: 1px solid var(--SmartThemeBorderColor);
+    border-radius: var(--radius-input);
+    transition: var(--transition-colors);
+}
+
+.text_pole:hover:not(:disabled):not(:focus) {
+    border-color: var(--grey50);
+}
+
+.text_pole:focus {
+    outline: none;
+    border-color: var(--SmartThemeBodyColor);
+    box-shadow: var(--shadow-focus);
+}
+
+/* Textarea improvements */
+#send_textarea {
+    font-size: var(--text-base);
+    line-height: var(--leading-normal);
+    padding: var(--space-3);
+}
+
+#send_textarea::placeholder {
+    color: var(--SmartThemeEmColor);
+    opacity: var(--opacity-placeholder);
+}
+
+/* ===================
+ * MENU BUTTON IMPROVEMENTS
+ * Better visual hierarchy for buttons
+ * =================== */
+
+.menu_button {
+    min-height: var(--size-button-md);
+    padding: var(--space-2) var(--space-3);
+    font-size: var(--text-sm);
+    border-radius: var(--radius-button);
+    transition: var(--transition-colors);
+}
+
+.menu_button:focus-visible {
+    outline: none;
+    box-shadow: var(--shadow-focus);
+}
+
+/* Icon buttons */
+.menu_button_icon {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    min-width: var(--size-button-md);
+    min-height: var(--size-button-md);
+    padding: var(--space-2);
+}
+
+/* Right menu button improvements */
+.right_menu_button {
+    transition: var(--transition-colors);
+    border-radius: var(--radius-sm);
+}
+
+.right_menu_button:hover {
+    background-color: var(--white20a);
+}
+
+/* ===================
+ * DRAWER CONTENT IMPROVEMENTS
+ * Better organization within drawers
+ * =================== */
+
+.drawer-content {
+    padding: var(--space-3);
+}
+
+.drawer-content .scrollableInner {
+    padding: var(--space-2);
+}
+
+/* Panel sections */
+#respective-presets-block > div,
+#common-gen-settings-block,
+#pro-settings-block {
+    margin-bottom: var(--space-4);
+}
+
+/* ===================
+ * SELECT DROPDOWNS
+ * Improved select styling
+ * =================== */
+
+select.text_pole {
+    cursor: pointer;
+    appearance: none;
+    background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 12 12'%3E%3Cpath fill='%23999' d='M6 8L1 3h10z'/%3E%3C/svg%3E");
+    background-repeat: no-repeat;
+    background-position: right var(--space-3) center;
+    padding-right: var(--space-8);
+}
+
+/* ===================
+ * PRESET MANAGER BUTTONS
+ * Group styling for preset action buttons
+ * =================== */
+
+.title_restorable .flex-container.gap3px {
+    background-color: var(--black30a);
+    border-radius: var(--radius-sm);
+    padding: var(--space-1);
+}
+
+.title_restorable .menu_button_icon {
+    min-width: var(--size-button-sm);
+    min-height: var(--size-button-sm);
+    padding: var(--space-1);
+    margin: 0;
+}
+
+/* ===================
+ * API CONNECTION STATUS
+ * More prominent connection indicator
+ * =================== */
+
+#api_button,
+#api_button_textgenerationwebui {
+    position: relative;
+}
+
+#api_button.connected::after,
+#api_button_textgenerationwebui.connected::after {
+    content: '';
+    position: absolute;
+    bottom: 2px;
+    right: 2px;
+    width: 8px;
+    height: 8px;
+    background-color: var(--active);
+    border-radius: var(--radius-full);
+    box-shadow: 0 0 4px var(--active);
+}
+
+/* ===================
+ * CHARACTER CARDS
+ * Better visual styling for character list
+ * =================== */
+
+.character_select,
+.bogus_folder_select,
+.group_select {
+    border-radius: var(--radius-card);
+    transition: var(--transition-colors);
+}
+
+.character_select:hover,
+.bogus_folder_select:hover,
+.group_select:hover {
+    background-color: var(--white20a);
+    transform: none;
+}
+
+/* ===================
+ * SCROLLBAR STYLING
+ * More subtle scrollbars
+ * =================== */
+
+::-webkit-scrollbar {
+    width: 8px;
+}
+
+::-webkit-scrollbar-track {
+    background: transparent;
+}
+
+::-webkit-scrollbar-thumb {
+    background-color: var(--grey50);
+    border-radius: var(--radius-full);
+    border: 2px solid transparent;
+    background-clip: content-box;
+}
+
+::-webkit-scrollbar-thumb:hover {
+    background-color: var(--grey70);
+}
+
+/* ===================
+ * LOADING STATES
+ * =================== */
+
+.loading-indicator {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: var(--space-2);
+    padding: var(--space-4);
+    color: var(--SmartThemeEmColor);
+}
+
+.loading-indicator::before {
+    content: '';
+    width: 20px;
+    height: 20px;
+    border: 2px solid var(--grey30);
+    border-top-color: var(--SmartThemeBodyColor);
+    border-radius: var(--radius-full);
+    animation: st-spin 0.6s linear infinite;
+}
+
+/* ===================
+ * EMPTY STATES
+ * Better messaging when no content
+ * =================== */
+
+.empty-state {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    padding: var(--space-8);
+    text-align: center;
+    color: var(--SmartThemeEmColor);
+}
+
+.empty-state-icon {
+    font-size: var(--text-3xl);
+    margin-bottom: var(--space-4);
+    opacity: var(--opacity-muted);
+}
+
+.empty-state-title {
+    font-size: var(--text-lg);
+    font-weight: var(--font-semibold);
+    color: var(--SmartThemeBodyColor);
+    margin-bottom: var(--space-2);
+}
+
+.empty-state-description {
+    font-size: var(--text-sm);
+    max-width: 280px;
+}
+
+/* ===================
+ * FOCUS IMPROVEMENTS
+ * Better focus visibility
+ * =================== */
+
+:focus-visible {
+    outline: none;
+    box-shadow: var(--shadow-focus) !important;
+}
+
+/* Remove default focus for non-keyboard navigation */
+:focus:not(:focus-visible) {
+    outline: none;
+    box-shadow: none;
+}
+
+/* ===================
+ * ANIMATION REFINEMENTS
+ * Minimal, functional animations
+ * =================== */
+
+@media (prefers-reduced-motion: no-preference) {
+    /* Drawer open/close animation */
+    .drawer-content {
+        transition: opacity var(--duration-fast) var(--ease-default),
+                    transform var(--duration-fast) var(--ease-default);
+    }
+
+    .drawer-content.closedDrawer {
+        opacity: 0;
+        transform: translateY(-10px);
+        pointer-events: none;
+    }
+
+    .drawer-content.openDrawer {
+        opacity: 1;
+        transform: translateY(0);
+    }
+}
+
+/* Respect reduced motion preference */
+@media (prefers-reduced-motion: reduce) {
+    *,
+    *::before,
+    *::after {
+        animation-duration: 0.01ms !important;
+        animation-iteration-count: 1 !important;
+        transition-duration: 0.01ms !important;
+    }
+}
+
+/* ===================
+ * MESSAGE BUBBLES
+ * Visual distinction between user and character messages
+ * =================== */
+
+/* Base message styling */
+.mes {
+    padding: var(--space-3) var(--space-4);
+    margin-bottom: var(--space-2);
+    border-radius: var(--radius-lg);
+    transition: var(--transition-colors);
+}
+
+.mes:hover {
+    background-color: var(--white20a);
+}
+
+/* User messages - right-aligned with accent tint */
+.mes[is_user="true"] {
+    background-color: var(--SmartThemeUserMesBlurTintColor);
+    border-left: 3px solid var(--active);
+    margin-left: var(--space-6);
+}
+
+.mes[is_user="true"]:hover {
+    background-color: color-mix(in srgb, var(--SmartThemeUserMesBlurTintColor) 80%, var(--active) 5%);
+}
+
+/* Character messages - left-aligned with neutral background */
+.mes[is_user="false"] {
+    background-color: var(--SmartThemeBotMesBlurTintColor);
+    border-left: 3px solid var(--SmartThemeQuoteColor);
+    margin-right: var(--space-6);
+}
+
+.mes[is_user="false"]:hover {
+    background-color: color-mix(in srgb, var(--SmartThemeBotMesBlurTintColor) 80%, var(--SmartThemeQuoteColor) 5%);
+}
+
+/* System messages - centered, muted */
+.mes[is_system="true"] {
+    background-color: var(--black30a);
+    border-left: 3px solid var(--grey50);
+    opacity: var(--opacity-muted);
+    font-size: var(--text-sm);
+}
+
+.mes[is_system="true"]:hover {
+    opacity: 1;
+}
+
+/* Message text improvements */
+.mes_text {
+    font-size: var(--text-base);
+    line-height: var(--leading-relaxed);
+    padding: var(--space-2) 0;
+}
+
+/* Character name styling */
+.ch_name {
+    padding-bottom: var(--space-2);
+    margin-bottom: var(--space-1);
+}
+
+.ch_name .name_text {
+    font-weight: var(--font-semibold);
+    font-size: var(--text-sm);
+}
+
+.mes[is_user="true"] .name_text {
+    color: var(--active);
+}
+
+.mes[is_user="false"] .name_text {
+    color: var(--SmartThemeQuoteColor);
+}
+
+/* Timestamp styling */
+.mes .timestamp {
+    font-size: var(--text-xs);
+    color: var(--SmartThemeEmColor);
+    opacity: var(--opacity-muted);
+    margin-left: var(--space-2);
+}
+
+/* ===================
+ * MESSAGE ACTIONS
+ * Hover to reveal pattern
+ * =================== */
+
+.mes_buttons {
+    opacity: 0;
+    transition: var(--transition-opacity);
+}
+
+.mes:hover .mes_buttons {
+    opacity: 1;
+}
+
+/* Always show for keyboard users */
+.mes:focus-within .mes_buttons {
+    opacity: 1;
+}
+
+/* Message action buttons */
+.mes_button {
+    padding: var(--space-1);
+    border-radius: var(--radius-sm);
+    opacity: var(--opacity-muted);
+    transition: var(--transition-colors);
+    cursor: pointer;
+}
+
+.mes_button:hover {
+    opacity: 1;
+    background-color: var(--white20a);
+}
+
+/* Extra message buttons container */
+.extraMesButtons {
+    display: flex;
+    gap: var(--space-1);
+    padding: var(--space-1);
+    background-color: var(--SmartThemeBlurTintColor);
+    border: 1px solid var(--SmartThemeBorderColor);
+    border-radius: var(--radius-md);
+    box-shadow: var(--shadow-lg);
+}
+
+/* ===================
+ * SWIPE CONTROLS
+ * Clear navigation for message swipes
+ * =================== */
+
+.swipe_left,
+.swipe_right {
+    width: var(--size-touch-min);
+    height: var(--size-touch-min);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    opacity: 0.5;
+    border-radius: var(--radius-full);
+    transition: var(--transition-all);
+    cursor: pointer;
+}
+
+.swipe_left:hover,
+.swipe_right:hover {
+    opacity: 1;
+    background-color: var(--white20a);
+    transform: scale(1.1);
+}
+
+.swipe_left:active,
+.swipe_right:active {
+    transform: scale(0.95);
+}
+
+/* Swipe counter badge */
+.swipes-counter {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    min-width: 50px;
+    padding: var(--space-1) var(--space-2);
+    font-size: var(--text-xs);
+    font-weight: var(--font-medium);
+    color: var(--SmartThemeBodyColor);
+    background-color: var(--black50a);
+    border-radius: var(--radius-full);
+    opacity: 0.7;
+}
+
+.mes:hover .swipes-counter {
+    opacity: 1;
+    background-color: var(--black70a);
+}
+
+/* ===================
+ * STREAMING INDICATOR
+ * Feedback during message generation
+ * =================== */
+
+.mes.streaming .mes_text::after {
+    content: '';
+    display: inline-block;
+    width: 8px;
+    height: 16px;
+    margin-left: 2px;
+    background-color: var(--SmartThemeBodyColor);
+    animation: st-blink 1s infinite;
+    vertical-align: text-bottom;
+}
+
+@keyframes st-blink {
+    0%, 50% { opacity: 1; }
+    51%, 100% { opacity: 0; }
+}
+
+/* ===================
+ * AVATAR IMPROVEMENTS
+ * =================== */
+
+.mes .avatar {
+    border-radius: var(--radius-md);
+    overflow: hidden;
+    box-shadow: var(--shadow-sm);
+    transition: var(--transition-transform);
+}
+
+.mes:hover .avatar {
+    transform: scale(1.02);
+}
+
+.mes .avatar img {
+    border-radius: var(--radius-md);
+}
+
+/* User avatar styling */
+.mes[is_user="true"] .avatar {
+    border: 2px solid var(--active);
+}
+
+/* Character avatar styling */
+.mes[is_user="false"] .avatar {
+    border: 2px solid var(--SmartThemeQuoteColor);
+}
+
+/* ===================
+ * REASONING BLOCK
+ * Collapsible thinking/reasoning section
+ * =================== */
+
+.mes_reasoning_details {
+    margin: var(--space-2) 0;
+    padding: var(--space-2);
+    background-color: var(--black30a);
+    border-radius: var(--radius-md);
+    border-left: 2px solid var(--SmartThemeEmColor);
+}
+
+.mes_reasoning_summary {
+    cursor: pointer;
+    padding: var(--space-2);
+    transition: var(--transition-colors);
+    border-radius: var(--radius-sm);
+}
+
+.mes_reasoning_summary:hover {
+    background-color: var(--white20a);
+}
+
+.mes_reasoning_header_title {
+    font-size: var(--text-sm);
+    font-weight: var(--font-medium);
+    color: var(--SmartThemeEmColor);
+}
+
+.mes_reasoning {
+    padding: var(--space-3);
+    font-size: var(--text-sm);
+    color: var(--SmartThemeEmColor);
+    line-height: var(--leading-relaxed);
+}
+
+/* ===================
+ * EDIT MODE
+ * Message editing state
+ * =================== */
+
+.mes_edit_buttons {
+    display: flex;
+    gap: var(--space-2);
+    padding: var(--space-2);
+    background-color: var(--black50a);
+    border-radius: var(--radius-md);
+}
+
+.mes_edit_done {
+    color: var(--active);
+}
+
+.mes_edit_delete {
+    color: var(--fullred);
+}
+
+.mes_edit_cancel {
+    color: var(--grey70);
+}
+
+/* ===================
+ * MOBILE OPTIMIZATIONS
+ * Responsive improvements for touch devices
+ * =================== */
+
+/* Tablet breakpoint (768px - 1000px) */
+@media screen and (max-width: 1000px) and (min-width: 769px) {
+    /* Slightly larger touch targets on tablets */
+    .menu_button,
+    .menu_button_icon {
+        min-height: var(--size-touch-comfortable);
+        min-width: var(--size-touch-comfortable);
+    }
+
+    /* Adjust message margins for narrower screens */
+    .mes[is_user="true"] {
+        margin-left: var(--space-4);
+    }
+
+    .mes[is_user="false"] {
+        margin-right: var(--space-4);
+    }
+
+    /* Always show message buttons on touch */
+    .mes_buttons {
+        opacity: 1;
+    }
+}
+
+/* Mobile breakpoint (< 768px) */
+@media screen and (max-width: 768px) {
+    /* Touch-friendly button sizes */
+    .menu_button,
+    .menu_button_icon,
+    .st-button,
+    .st-icon-button {
+        min-height: var(--size-touch-min);
+        min-width: var(--size-touch-min);
+    }
+
+    /* Larger swipe controls for touch */
+    .swipe_left,
+    .swipe_right {
+        width: 48px;
+        height: 48px;
+        font-size: 24px;
+    }
+
+    /* Always visible message actions on mobile */
+    .mes_buttons {
+        opacity: 1;
+    }
+
+    /* Remove message margins on mobile */
+    .mes[is_user="true"],
+    .mes[is_user="false"] {
+        margin-left: 0;
+        margin-right: 0;
+    }
+
+    /* Larger input areas */
+    #send_textarea {
+        font-size: var(--text-lg);
+        min-height: 48px;
+    }
+
+    /* Larger send button */
+    #send_but {
+        min-width: 48px;
+        min-height: 48px;
+    }
+
+    /* Adjust spacing */
+    .mes {
+        padding: var(--space-2) var(--space-3);
+    }
+
+    /* Drawer improvements for mobile */
+    .drawer-content {
+        padding: var(--space-2);
+    }
+
+    /* Adjust section headers */
+    .standoutHeader {
+        padding: var(--space-2);
+    }
+
+    /* Larger form inputs */
+    .text_pole,
+    select.text_pole {
+        min-height: var(--size-touch-min);
+        font-size: var(--text-base);
+    }
+
+    /* Swipe counter more visible */
+    .swipes-counter {
+        font-size: var(--text-sm);
+        padding: var(--space-2) var(--space-3);
+        opacity: 1;
+    }
+
+    /* Timestamp on own line */
+    .mes .timestamp {
+        display: block;
+        margin-left: 0;
+        margin-top: var(--space-1);
+    }
+}
+
+/* Very small screens (< 450px, portrait phones) */
+@media screen and (max-width: 450px) {
+    /* Even more compact spacing */
+    .mes {
+        padding: var(--space-2);
+    }
+
+    /* Reduce avatar size on very small screens */
+    .mes .avatar {
+        width: 36px;
+        height: 36px;
+    }
+
+    /* Stack send form elements */
+    #send_form {
+        gap: var(--space-2);
+    }
+
+    /* Full-width inputs */
+    .text_pole,
+    select.text_pole {
+        width: 100%;
+    }
+
+    /* Adjust button text */
+    .st-button:not(.st-button--icon) {
+        font-size: var(--text-sm);
+        padding: var(--space-2) var(--space-3);
+    }
+
+    /* Hide less important buttons */
+    .extraMesButtons {
+        flex-wrap: wrap;
+    }
+}
+
+/* ===================
+ * TOUCH DEVICE OPTIMIZATIONS
+ * For devices with touch capability
+ * =================== */
+
+@media (hover: none) and (pointer: coarse) {
+    /* Always show interactive elements on touch devices */
+    .mes_buttons {
+        opacity: 1;
+    }
+
+    /* Remove hover-dependent styles */
+    .mes:hover {
+        background-color: inherit;
+    }
+
+    .mes[is_user="true"]:hover {
+        background-color: var(--SmartThemeUserMesBlurTintColor);
+    }
+
+    .mes[is_user="false"]:hover {
+        background-color: var(--SmartThemeBotMesBlurTintColor);
+    }
+
+    /* Active states for touch feedback */
+    .menu_button:active,
+    .st-button:active {
+        transform: scale(0.95);
+        opacity: 0.8;
+    }
+
+    /* Larger touch targets */
+    .mes_button {
+        padding: var(--space-2);
+        min-width: var(--size-touch-min);
+        min-height: var(--size-touch-min);
+    }
+
+    /* Visible swipe controls */
+    .swipe_left,
+    .swipe_right {
+        opacity: 0.7;
+    }
+}
+
+/* ===================
+ * LANDSCAPE PHONE OPTIMIZATIONS
+ * =================== */
+
+@media screen and (max-height: 500px) and (orientation: landscape) {
+    /* Reduce vertical padding in landscape */
+    .mes {
+        padding-top: var(--space-2);
+        padding-bottom: var(--space-2);
+    }
+
+    /* Smaller avatars in landscape */
+    .mes .avatar {
+        width: 32px;
+        height: 32px;
+    }
+
+    /* Compact input area */
+    #send_textarea {
+        max-height: 80px;
+    }
+
+    /* Hide non-essential UI */
+    .mes .timestamp {
+        display: none;
+    }
+}
+
+/* ===================
+ * HIGH DPI / RETINA OPTIMIZATIONS
+ * =================== */
+
+@media (-webkit-min-device-pixel-ratio: 2), (min-resolution: 192dpi) {
+    /* Sharper borders on retina displays */
+    .mes,
+    .st-card,
+    .st-button {
+        border-width: 0.5px;
+    }
+}
+
+/* ===================
+ * PRINT STYLES
+ * For printing chat logs
+ * =================== */
+
+@media print {
+    /* Clean background for printing */
+    body {
+        background: white;
+        color: black;
+    }
+
+    /* Hide UI elements */
+    #top-bar,
+    #send_form,
+    .drawer,
+    .mes_buttons,
+    .swipe_left,
+    .swipe_right,
+    .swipes-counter {
+        display: none !important;
+    }
+
+    /* Clean message styling */
+    .mes {
+        border: 1px solid #ccc;
+        margin-bottom: 10px;
+        page-break-inside: avoid;
+    }
+
+    .mes[is_user="true"] {
+        background-color: #f0f0f0;
+    }
+
+    .mes[is_user="false"] {
+        background-color: #fff;
+    }
+}

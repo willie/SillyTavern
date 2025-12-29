@@ -1,5 +1,14 @@
 @charset "UTF-8";
 
+/* Design Tokens - must be first */
+@import url(css/tokens.css);
+
+/* Component Library */
+@import url(css/components.css);
+
+/* UI Overhaul - Progressive enhancements */
+@import url(css/ui-overhaul.css);
+
 @import url(css/animations.css);
 @import url(css/popup.css);
 @import url(css/promptmanager.css);

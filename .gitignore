@@ -57,3 +57,6 @@ public/scripts/extensions/third-party
 yarn.lock
 *.code-workspace
 test-results/
+
+# Comment the line below if you really want to commit .serve/
+.serve/
