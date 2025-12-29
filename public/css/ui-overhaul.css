@@ -631,6 +631,7 @@ select.text_pole {
     display: flex;
     align-items: center;
     gap: var(--space-2);
+    position: relative;
 }
 
 /* All primary buttons */
@@ -688,23 +689,22 @@ select.text_pole {
  * =================== */
 
 .extraMesButtons {
-    /* Keep hidden by default - JS toggles visibility */
+    /* Position absolute to prevent reflow */
+    position: absolute;
+    top: 100%;
+    right: 0;
+    z-index: var(--z-dropdown);
+    /* Layout */
     flex-direction: column;
     gap: var(--space-1);
     padding: var(--space-2);
+    /* Appearance */
     background-color: var(--SmartThemeBlurTintColor);
     border: 1px solid var(--SmartThemeBorderColor);
     border-radius: var(--radius-md);
     box-shadow: var(--shadow-lg);
     min-width: 160px;
     backdrop-filter: blur(10px);
-}
-
-/* When dropdown is shown, use column layout */
-.extraMesButtons[style*="display: flex"],
-.extraMesButtons[style*="display:flex"],
-body.expandMessageActions .extraMesButtons {
-    flex-direction: column;
 }
 
 /* Action groups */
