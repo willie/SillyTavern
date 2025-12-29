@@ -557,6 +557,11 @@ select.text_pole {
     padding: var(--space-2) 0;
 }
 
+/* Hide hr elements in messages - usually unwanted formatting from AI */
+.mes_text hr {
+    display: none;
+}
+
 /* Character name styling */
 .ch_name {
     padding-bottom: var(--space-2);
