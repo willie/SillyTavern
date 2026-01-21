@@ -60,3 +60,4 @@ test-results/
 
 # Comment the line below if you really want to commit .serve/
 .serve/
+/SillyTavernApp/.build

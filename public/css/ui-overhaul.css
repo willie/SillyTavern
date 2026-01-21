@@ -688,11 +688,12 @@ select.text_pole {
  * Hidden by default, shown on click via JS
  * =================== */
 
-.extraMesButtons {
-    /* Position absolute to prevent reflow */
-    position: absolute;
-    top: 100%;
+.mes_buttons .extraMesButtons {
+    /* Position absolute to prevent reflow - override style.css position: relative */
+    position: absolute !important;
+    bottom: 100%;
     right: 0;
+    margin-bottom: var(--space-1);
     z-index: var(--z-dropdown);
     /* Layout */
     flex-direction: column;
@@ -703,7 +704,8 @@ select.text_pole {
     border: 1px solid var(--SmartThemeBorderColor);
     border-radius: var(--radius-md);
     box-shadow: var(--shadow-lg);
-    min-width: 160px;
+    min-width: 140px;
+    max-width: 200px;
     backdrop-filter: blur(10px);
 }
 
