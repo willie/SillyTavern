@@ -58,6 +58,17 @@ Every message generation begins here. `type` is one of: `undefined`/`'normal'`, 
 13. **Final assembly** — branch to text completion or chat completion path (lines 5012-5087)
 14. **API call** — send to backend endpoint
 
+### API branching
+
+The global `main_api` variable determines the backend: `'openai'` (chat completion) vs `'kobold'`/`'koboldhorde'`/`'textgenerationwebui'`/`'novel'` (text completion).
+
+```js
+// script.js:4082
+const isInstruct = power_user.instruct.enabled && main_api !== 'openai';
+```
+
+Chat completion APIs never use instruct mode — they have their own message-based prompt manager.
+
 ---
 
 ## 2. Character Card Fields
@@ -96,7 +107,24 @@ export function baseChatReplace(value, name1Override, name2Override) {
 
 ### Character Card V2 format
 
-Character cards are stored as PNG files with embedded JSON (TavernCard V2 spec) or standalone JSON. Parsed on the backend in `src/endpoints/characters.js:181` (`readCharacterData()`), which extracts the JSON from the PNG's tEXt chunk.
+Defined in `public/scripts/char-data.js:50-123`:
+
+```js
+// v2CharData fields
+{
+    name, description, character_version, personality, scenario,
+    first_mes, mes_example, creator_notes, tags,
+    system_prompt, post_history_instructions, creator,
+    alternate_greetings, character_book,
+    extensions: {
+        talkativeness, fav, world,
+        depth_prompt: { depth, prompt, role },
+        regex_scripts
+    }
+}
+```
+
+Character cards are stored as PNG files with embedded JSON (TavernCard V2 spec) or standalone JSON. Parsed on the backend in `src/character-card-parser.js` (`read()`), which extracts the JSON from the PNG's tEXt chunk.
 
 ---
 
@@ -186,22 +214,21 @@ After scanning, activated entries are categorized by `position`:
 
 ## 4. Macro / Variable Substitution
 
-**File:** `public/script.js:2823-2852` (entry), `public/scripts/macros.js` (legacy engine), `public/scripts/macros/engine/` (experimental engine)
+**Files:** `public/scripts/macros/` directory, `public/script.js:2823-2852`
 
 Macros are `{{name}}` patterns substituted throughout every text field (character data, system prompts, world info content, extension prompts, user messages).
 
-### 4.1 Entry Point
+### 4.1 Architecture
 
-```js
-// public/script.js:2823
-export function substituteParams(content, options = {}) {
-    if (!power_user?.experimental_macro_engine) {
-        return substituteParamsLegacy(content, ...);
-    }
-    const env = MacroEnvBuilder.buildFromRawEnv(ctx);
-    return MacroEngine.evaluate(content, env);
-}
-```
+The modern macro system lives in `public/scripts/macros/engine/`:
+- **`MacroEngine`** — Singleton that evaluates `{{macro::arg1::arg2}}` expressions
+- **`MacroRegistry`** — Registry of all macro definitions
+- **`MacroLexer`** / **`MacroParser`** / **`MacroCstWalker`** — Tokenization, parsing, and CST evaluation
+- **`MacroEnvBuilder`** — Builds the environment context (names, character fields, system info)
+
+Plus a legacy regex-based path via `getInstructMacros()` in `instruct-mode.js:673-785`.
+
+Initialized at startup via `initRegisterMacros()` (`macros/macro-system.js:64-83`).
 
 ### 4.2 Complete Macro List
 
@@ -262,16 +289,16 @@ export function substituteParams(content, options = {}) {
 **Utility:**
 | Macro | Value |
 |-------|-------|
-| `{{newline}}` | Literal `\n` |
+| `{{newline}}` / `{{newline::N}}` | Literal `\n` (N times) |
 | `{{trim}}` | Trim surrounding whitespace (post-processing) |
 | `{{noop}}` | Empty string |
 | `{{space}}` / `{{space::N}}` | Space(s) |
 | `{{reverse::text}}` | Reversed string |
 | `{{// comment}}` | Stripped (comment) |
-| `{{roll FORMULA}}` | Dice roll (e.g., `{{roll 1d20+5}}`) |
+| `{{roll::FORMULA}}` | Dice roll (e.g., `{{roll::1d20+5}}`) |
 | `{{random::a::b::c}}` | Random selection |
 | `{{pick::a::b::c}}` | Deterministic seeded pick |
-| `{{banned "word"}}` | Add word to ban list |
+| `{{banned::word}}` | Add word to textgen ban list |
 | `{{outlet::key}}` | WI outlet content |
 
 **Variables:**
@@ -284,12 +311,17 @@ export function substituteParams(content, options = {}) {
 | `{{decvar::name}}` | Decrement variable |
 | `{{ifvar::name::true::false}}` | Conditional |
 
-**Author's Note:**
+**Instruct/prompt macros** (from `macros/definitions/instruct-macros.js`):
 | Macro | Value |
 |-------|-------|
-| `{{authorsNote}}` | Current chat's AN |
-| `{{charAuthorsNote}}` | Character-specific AN |
-| `{{defaultAuthorsNote}}` | Default AN |
+| `{{instructUserPrefix}}` / `{{instructInput}}` | Instruct input sequence |
+| `{{instructAssistantPrefix}}` / `{{instructOutput}}` | Instruct output sequence |
+| `{{instructSystemPrefix}}` | System sequence |
+| `{{instructStop}}` | Stop sequence |
+| `{{systemPrompt}}` | Active system prompt (with character override) |
+| `{{defaultSystemPrompt}}` | Default system prompt content |
+| `{{exampleSeparator}}` / `{{chatSeparator}}` | Example separator (`***`) |
+| `{{chatStart}}` | Chat start marker (`***`) |
 
 ---
 
@@ -336,6 +368,16 @@ if (main_api !== 'openai') {
 ```
 
 **Priority**: If `prefer_character_prompt` is enabled and the character card has a system prompt, the character's prompt is used (with the global prompt available via `{{original}}`). Otherwise the global `power_user.sysprompt.content` is used.
+
+**Default system prompt** (`power-user.js:273-278`):
+```js
+sysprompt: {
+    enabled: true,
+    name: 'Neutral - Chat',
+    content: "Write {{char}}'s next reply in a fictional chat between {{char}} and {{user}}.",
+    post_history: '',
+},
+```
 
 For OpenAI/Chat Completion APIs, system prompt handling is done entirely in the PromptManager (see [section 15](#15-chat-completion-assembly-openai-path)).
 
@@ -398,24 +440,7 @@ export function renderStoryString(params) {
 }
 ```
 
-### 7.4 Context Presets
-
-Preset files in `default/content/presets/context/` define custom story string templates. Example (ChatML preset):
-
-```
-{{#if anchorBefore}}{{anchorBefore}}\n{{/if}}
-{{#if system}}{{system}}\n{{/if}}
-{{#if wiBefore}}{{wiBefore}}\n{{/if}}
-{{#if description}}{{description}}\n{{/if}}
-{{#if personality}}{{personality}}\n{{/if}}
-{{#if scenario}}{{scenario}}\n{{/if}}
-{{#if wiAfter}}{{wiAfter}}\n{{/if}}
-{{#if persona}}{{persona}}\n{{/if}}
-{{#if anchorAfter}}{{anchorAfter}}\n{{/if}}
-{{trim}}
-```
-
-### 7.5 Story String Position
+### 7.4 Story String Position
 
 The rendered story string can be placed in two positions (`power_user.context.story_string_position`):
 
@@ -682,7 +707,7 @@ if (main_api !== 'openai' && power_user.sysprompt.enabled) {
 
 ## 13. Context Budget and Token Management
 
-**File:** `public/script.js:4328-4374, 4618-4741, 4865-4891`
+**File:** `public/script.js:4328-4374, 4618-4741, 4865-4891`, `public/scripts/tokenizers.js`
 
 ### 13.1 Max Context Determination
 
@@ -691,7 +716,17 @@ let this_max_context = getMaxContextSize();  // From model/API settings
 // Adjusted for: Horde limits, CFG guidance prompts
 ```
 
-### 13.2 Token Counting
+Default: `MAX_CONTEXT_DEFAULT = 8192` (`power-user.js:78`). Unlocked max: `512 * 1024 = 524,288`.
+
+### 13.2 Tokenizer Selection
+
+The `tokenizers` enum (`tokenizers.js:15-37`) includes: NONE(0), GPT2(1), OPENAI(2), LLAMA(3), NERD(4), NERD2(5), API_CURRENT(6), MISTRAL(7), YI(8), API_TEXTGENERATIONWEBUI(9), API_KOBOLD(10), CLAUDE(11), LLAMA3(12), GEMMA(13), JAMBA(14), QWEN2(15), COMMAND_R(16), NEMO(17), DEEPSEEK(18), COMMAND_A(19), BEST_MATCH(99).
+
+`BEST_MATCH` auto-detects based on `main_api` and model name patterns. Fallback: `CHARACTERS_PER_TOKEN_RATIO = 3.35` → `Math.ceil(str.length / 3.35)`.
+
+**OpenAI path optimization**: When `main_api === 'openai'`, the main prompt builder uses `tokenizers.NONE` (guesstimate) for speed. Extensions and WI use the real tokenizer.
+
+### 13.3 Token Counting
 
 ```js
 async function getMessagesTokenCount() {
@@ -705,14 +740,14 @@ async function getMessagesTokenCount() {
 
 `power_user.token_padding` (default 64) is added as safety margin.
 
-### 13.3 Message Filling Loop
+### 13.4 Message Filling Loop (Text Completion)
 
 1. **Pre-allocate injected messages** (depth prompts) — always included (line 4649-4671)
 2. **Fill remaining messages** oldest-to-newest until budget exceeded (line 4673-4698)
 3. **Add user alignment message** if last message isn't from user (line 4700-4707)
 4. **Fit unpinned examples** into remaining budget (line 4728-4741)
 
-### 13.4 Overflow Handling — `checkPromptSize()`
+### 13.5 Overflow Handling — `checkPromptSize()`
 
 ```js
 async function checkPromptSize() {
@@ -780,6 +815,33 @@ await eventSource.emit(event_types.GENERATE_AFTER_COMBINE_PROMPTS, eventData);
 
 For `main_api === 'openai'`, prompt assembly uses an entirely different system based on a `PromptManager` and `ChatCompletion` class.
 
+### 15.0 Chat-to-ChatML Conversion — `setOpenAIMessages()` (`openai.js:523-598`)
+
+Before entering the PromptManager pipeline, the raw `coreChat` array is converted to a ChatML-style message array. This function:
+
+1. **Assigns roles**: `is_user` → `'user'`, else → `'assistant'`. Narrator-typed messages → `'system'`.
+2. **Applies name prefixing** based on `oai_settings.names_behavior`:
+
+| Mode | Value | Behavior |
+|------|-------|----------|
+| `NONE` | 0 | No name prefix |
+| `DEFAULT` | 1 | Prefix only in groups or with `force_avatar` |
+| `CONTENT` | 2 | Always prefix `Name: ` in content (except narrators) |
+| `COMPLETION` | 3 | Name passed via `name` field on the message object (used with OpenAI's `name` parameter) |
+
+3. **Preserves metadata**: media attachments, tool invocations, reasoning signatures (validated against current API/model)
+4. **Strips `\r`** carriage returns
+
+```js
+// openai.js:523-593
+messages[i] = {
+    role, content, name, media, mediaDisplay, mediaIndex,
+    invocations, signature
+};
+```
+
+Example messages are similarly converted via `setOpenAIMessageExamples()` (`openai.js:605-616`) → `parseExampleIntoIndividual()` (`openai.js:678-736`), which splits example blocks on speaker names into `{ role: 'system', content, name: 'example_user'|'example_assistant' }`.
+
 ### 15.1 Entry Point
 
 Called from `Generate()` at line 5057:
@@ -796,7 +858,7 @@ let [prompt, counts] = await prepareOpenAIMessages({
 
 ### 15.2 PromptManager Prompt Order
 
-The PromptManager (`public/scripts/PromptManager.js`) maintains an ordered list of prompt slots. Default order:
+The PromptManager (`public/scripts/PromptManager.js`) maintains an ordered list of prompt slots. Default order (`PromptManager.js:2089-2138`):
 
 | # | Identifier | Type | Content |
 |---|-----------|------|---------|
@@ -815,51 +877,85 @@ The PromptManager (`public/scripts/PromptManager.js`) maintains an ordered list 
 
 Users can reorder these via the Prompt Manager UI. Custom prompts can be added between any slots.
 
-### 15.3 Assembly Flow — `populateChatCompletion()`
+### 15.3 Token Budget
 
-**File:** `openai.js:1076-1238`
+```js
+chatCompletion.setTokenBudget(openai_max_context, openai_max_tokens);
+// tokenBudget = openai_max_context - openai_max_tokens
+```
 
-1. **Add character info markers** — world info, description, personality, scenario, persona at their positions
-2. **Add control prompts** — impersonate/quiet prompt (reserved budget, positioned last)
-3. **Add system prompts** — `main`, `nsfw`, `jailbreak`, `enhanceDefinitions` in user-defined order
-4. **Add extension prompts** — memory/summary (`1_memory`), author's note (`2_floating_prompt`), vectors (`3_vectors`), data bank (`4_vectors_data_bank`), ChromaDB, and any custom extension prompts with position info
-5. **Add tool data** — pre-allocate tokens for function calling
-6. **Add continue prefill** — assistant message start for continuation
-7. **Add in-chat injection prompts** — absolute-positioned extension prompts at specific depths
-8. **Add dialogue examples and chat history** — order depends on `power_user.pin_examples`
-9. **Free control prompt budget** and add control messages
+### 15.3a Prompt Merging — `preparePromptsForChatCompletion()` (`openai.js:1258-1407`)
 
-### 15.4 Chat History Population — `populateChatHistory()`
+This step merges the PromptManager's user-defined prompt order with dynamically generated system prompts:
 
-**File:** `openai.js:834-983`
+1. **Create system prompt entries** from character data and world info (lines 1265-1277):
+   ```js
+   { role: 'system', content: worldInfoBefore, identifier: 'worldInfoBefore' }
+   { role: 'system', content: worldInfoAfter, identifier: 'worldInfoAfter' }
+   { role: 'system', content: charDescription, identifier: 'charDescription' }
+   // ... charPersonality, scenario, impersonate, quietPrompt, groupNudge, bias
+   ```
 
-1. Reserve budget for `newChat`/`newMainChat` system marker
-2. Optionally reserve `groupNudge` prompt
-3. Handle `continueNudge` for continuation
-4. Add `send_if_empty` replacement if user message empty
-5. Iterate messages in **reverse** (newest first), adding until budget exhausted:
-   - Handle multimodal content (inline images/video/audio)
-   - Handle tool invocations and results
-   - Handle reasoning signatures
-   - Apply name prefixing based on `names_behavior`
+2. **Merge known extension prompts** — Each maps to a named identifier with its position (lines 1279-1321):
+   - `1_memory` → `'summary'` (position: relative to main prompt)
+   - `2_floating_prompt` → `'authorsNote'`
+   - `3_vectors` → `'vectorsMemory'`
+   - `4_vectors_data_bank` → `'vectorsDataBank'`
+   - `chromadb` → `'smartContext'`
+
+3. **Merge unknown extension prompts** — Any extension prompt not in the known list and positioned at `BEFORE_PROMPT` or `IN_PROMPT` is added with a sanitized identifier (lines 1340-1358)
+
+4. **Merge into PromptManager collection** — Each system prompt replaces its matching marker in the user's prompt order. If no marker exists, it's appended (lines 1364-1384)
+
+5. **Apply character overrides** — Character-specific main prompt and jailbreak override the PromptManager defaults (with `{{original}}` macro support) unless `forbid_overrides` is set (lines 1386-1404)
+
+### 15.4 Assembly Flow — `populateChatCompletion()` (`openai.js:1076-1238`)
+
+1. **Reserve** 3 tokens for assistant priming
+2. **Add character info markers** — worldInfoBefore, main, worldInfoAfter, charDescription, charPersonality, scenario, personaDescription (mandatory — throws `TokenBudgetExceededError` if insufficient)
+3. **Reserve control prompt budget** — impersonate/quiet prompt
+4. **Add system prompts** — `nsfw`, `jailbreak`, user-defined prompts
+5. **Add extension prompts** — memory/summary (`1_memory`), author's note (`2_floating_prompt`), vectors (`3_vectors`), data bank (`4_vectors_data_bank`), ChromaDB — injected relative to `main` prompt
+6. **Reserve tool data** — pre-allocate tokens for function calling
+7. **Handle continue prefill** — assistant message for continuation
+8. **Add in-chat injection prompts** — absolute-positioned extension prompts at specific depths via `populationInjectionPrompts()` (`openai.js:759-824`)
+9. **Add dialogue examples and chat history** — order depends on `power_user.pin_examples`:
+   - Pinned: examples first (guaranteed), then history fills remainder
+   - Unpinned: history first (priority), then examples fill remainder
+10. **Free control prompt budget** and add control messages last
+
+### 15.5 Chat History Population — `populateChatHistory()` (`openai.js:834-983`)
+
+1. Reserve budget for `[Start a new Chat]` marker, group nudge, continue nudge
+2. Iterate messages in **reverse** (newest first), adding until budget exhausted
+3. Handle multimodal content (inline images/video/audio with token estimation: images=85 tokens, video=263 tokens/sec, audio=32 tokens/sec)
+4. Handle tool invocations and reasoning signatures
+5. Apply name prefixing based on `names_behavior`
 6. Insert control messages (new chat marker, group nudge, continue nudge)
 
-### 15.5 `ChatCompletion` Class
+### 15.6 `ChatCompletion` Class (`openai.js:3568-3920`)
 
-**File:** `openai.js:3573+`
-
-Manages a hierarchy of `MessageCollection` objects with token budget tracking. Key methods:
+Manages a hierarchy of `MessageCollection` objects with token budget tracking:
 - `setTokenBudget(maxContext, maxTokens)` — Set total budget = maxContext - maxTokens
-- `reserveBudget(identifier)` / `freeBudget(identifier)` — Pre-allocate/release tokens
-- `add(message, position)` — Add message if budget allows
+- `reserveBudget(msg)` / `freeBudget(msg)` — Pre-allocate/release tokens
+- `add(collection, position)` — Add message collection if budget allows
+- `canAfford(message)` — Check if budget has room
 - `getChat()` — Flatten hierarchy to final message array
 - `squashSystemMessages()` — Optionally combine consecutive system messages
 
-### 15.6 Final Output Format
+### 15.7 Final Output Format
 
 ```js
 const chat = chatCompletion.getChat();
 // Returns: [{ role, content, name?, tool_calls?, tool_call_id?, signature? }, ...]
+```
+
+Sent to backend via `sendOpenAIRequest()` (`openai.js:2808`):
+```js
+const { generate_data, stream } = await createGenerationParameters(oai_settings, model, type, messages, { jsonSchema });
+const response = await fetch('/api/backends/chat-completions/generate', {
+    method: 'POST', body: JSON.stringify(generate_data), ...
+});
 ```
 
 ---
@@ -870,10 +966,9 @@ const chat = chatCompletion.getChat();
 
 Instruct mode wraps messages in model-specific instruction sequences. Only used for text completion APIs (`main_api !== 'openai'`).
 
-### 16.1 Configuration
+### 16.1 Configuration (`power-user.js:224-251`)
 
 ```js
-// power-user.js:224-251
 instruct: {
     enabled: false,
     input_sequence: '### Instruction:',      // User message prefix
@@ -892,41 +987,29 @@ instruct: {
     wrap: true,                             // Add newline separators
     macro: true,                            // Substitute macros in sequences
     names_behavior: 'force',                // NONE, ALWAYS, FORCE
-    user_alignment_message: '',             // Force user turn at end
+    system_same_as_user: false,            // Treat system messages as user
+    sequences_as_stop_strings: true,       // Add sequences to stop strings
+    user_alignment_message: '',            // Force user turn at end
 }
 ```
 
-### 16.2 Preset Examples
-
-**ChatML:**
-```
-input_sequence:  <|im_start|>user
-output_sequence: <|im_start|>assistant
-system_sequence: <|im_start|>system
-stop_sequence:   <|im_end|>
-*_suffix:        <|im_end|>\n
-story_string_prefix: <|im_start|>system
-story_string_suffix: <|im_end|>\n
-```
-
-**Llama 3:**
-```
-input_sequence:  <|start_header_id|>user<|end_header_id|>\n\n
-output_sequence: <|start_header_id|>assistant<|end_header_id|>\n\n
-system_sequence: <|start_header_id|>system<|end_header_id|>\n\n
-stop_sequence:   <|eot_id|>
-```
-
-### 16.3 Key Functions
+### 16.2 Key Functions
 
 | Function | File:Line | Purpose |
 |----------|-----------|---------|
-| `formatInstructModeStoryString()` | instruct-mode.js:478 | Wraps story string with prefix/suffix |
+| `formatInstructModeStoryString()` | instruct-mode.js:478 | Wraps story string with `story_string_prefix`/`story_string_suffix` |
 | `formatInstructModeExamples()` | instruct-mode.js:511 | Wraps example dialogues with sequences |
-| `formatInstructModeChat()` | instruct-mode.js:387 | Wraps individual chat messages |
-| `formatInstructModePrompt()` | instruct-mode.js:593 | Formats the final generation prompt line |
+| `formatInstructModeChat()` | instruct-mode.js:387 | Wraps individual chat messages with input/output/system sequences |
+| `formatInstructModePrompt()` | instruct-mode.js:593 | Formats the final generation trigger line |
 
 Each function selects the appropriate prefix/suffix based on role (user/assistant/system) and position (first/last/normal), applies macro substitution on the sequences, and handles name inclusion based on `names_behavior`.
+
+### 16.3 Auto-Selection (`instruct-mode.js:236-292`)
+
+`autoSelectInstructPreset()` matches instruct presets to models via:
+1. Explicit `model_templates_mappings[modelId]`
+2. `activation_regex` on each preset
+3. `bind_to_context` ties instruct preset to context template name
 
 ---
 
@@ -936,39 +1019,39 @@ Each function selects the appropriate prefix/suffix based on role (user/assistan
 
 The frontend sends a normalized ChatML message array (`[{role, content, name?, ...}]`) to the backend. The backend transforms this for each API.
 
-### 17.1 Post-Processing Types
+### 17.1 Post-Processing Types (`prompt-converters.js:15-26`)
 
 ```js
-// src/prompt-converters.js:15-26
 export const PROMPT_PROCESSING_TYPE = {
     NONE: '',              // Pass through unchanged
     MERGE: 'merge',        // Merge consecutive same-role messages
     MERGE_TOOLS: 'merge_tools',  // Merge with tool message support
-    SEMI: 'semi',          // Strict without placeholders
+    SEMI: 'semi',          // Strict: mid-prompt system→user, then merge
     SEMI_TOOLS: 'semi_tools',
-    STRICT: 'strict',      // Strict with placeholder user messages
+    STRICT: 'strict',      // Strict + insert placeholder user messages for alternation
     STRICT_TOOLS: 'strict_tools',
     SINGLE: 'single',      // All messages collapsed to user role
 };
 ```
 
-`postProcessPrompt()` (line 83) routes to `mergeMessages()` which:
+`postProcessPrompt()` (line 83) routes to `mergeMessages()` (line 822) which:
 1. Flattens multimodal content arrays to strings (preserving media tokens)
 2. Prepends speaker names to content
-3. Merges consecutive messages with same role
-4. In strict mode, forces mid-prompt system messages to user role and adds placeholder messages
+3. Merges consecutive messages with same role (joined with `\n\n`)
+4. In strict mode, forces mid-prompt system messages to user role and adds placeholder messages for alternation
 5. In single mode, collapses all messages into user role
+6. Restores multimodal content tokens
 
 ### 17.2 API-Specific Converters
 
 #### Claude (`convertClaudeMessages()`, line 196-375)
 
-- Extracts leading system messages → `systemPrompt: [{ type: 'text', text }]`
-- Remaining system messages → user role
+- Extracts leading system messages → separate `systemPrompt: [{ type: 'text', text }]`
+- Remaining system messages → user role with name prefix
 - Content normalized to `[{ type: 'text', text }]` arrays
 - Images extracted from base64 URLs → `{ type: 'image', source: { type: 'base64', ... } }`
-- Images in assistant messages moved to next user message
-- Consecutive same-role messages merged
+- Images in assistant messages moved to next user message (Claude API requirement)
+- Consecutive same-role messages merged (content arrays concatenated)
 - Tool calls → `{ type: 'tool_use', id, name, input }`
 - Tool results → `{ type: 'tool_result', tool_use_id, content }`
 - Optional prefill added as trailing assistant message
@@ -981,6 +1064,7 @@ export const PROMPT_PROCESSING_TYPE = {
 - Images → `inlineData: { mimeType, data: base64 }`
 - Tool calls → `functionCall: { name, args }`
 - Tool results → `functionResponse: { name, response }`
+- Thought signatures for Gemini 2.5/3 models
 - Consecutive same-role merging
 
 #### Text Completion (`convertTextCompletionPrompt()`, line 957-975)
@@ -993,26 +1077,35 @@ System: [system message]
 assistant:
 ```
 
-#### Other converters
+#### Other Converters
 
 - **AI21** (`convertAI21Messages()`, line 626): Extracts system, merges consecutive
 - **Cohere** (`convertCohereMessages()`, line 383): Converts system/tool to user
-- **Mistral** (`convertMistralMessages()`, line 698): Sanitizes tool IDs, handles prefill
+- **Mistral** (`convertMistralMessages()`, line 698): Sanitizes tool IDs (SHA-512 hash to 9 chars), handles prefill, fixes system-after-assistant
 - **xAI** (`convertXAIMessages()`, line 780): Name prefixing
 
-### 17.3 Routing
-
-The `/generate` endpoint (`chat-completions.js:2010`) routes based on `chat_completion_source`:
+### 17.3 Routing (`chat-completions.js:2010`)
 
 ```js
 switch (request.body.chat_completion_source) {
     case 'claude':     return sendClaudeRequest(request, response);
-    case 'makersuite': return sendMakerSuiteRequest(request, response);
+    case 'makersuite': return sendMakerSuiteRequest(request, response);  // Gemini
+    case 'vertexai':   return sendMakerSuiteRequest(request, response);
+    case 'mistralai':  return sendMistralAIRequest(request, response);
+    case 'cohere':     return sendCohereRequest(request, response);
     case 'ai21':       return sendAI21Request(request, response);
-    // ... 20+ other sources
+    case 'deepseek':   return sendDeepSeekRequest(request, response);
+    case 'xai':        return sendXaiRequest(request, response);
+    // ... 10+ more sources
     default:           // Standard OpenAI-compatible endpoint
 }
 ```
+
+### 17.4 Caching (`prompt-converters.js:983-1106`)
+
+For Claude: `cachingAtDepthForClaude()` places `cache_control: { type: 'ephemeral', ttl }` breakpoints at role-transition depth boundaries (two breakpoints separated by 2 role switches).
+
+For OpenRouter: `cachingSystemPromptForOpenRouter()` adds `cache_control` to the first system message.
 
 ---
 
@@ -1020,29 +1113,36 @@ switch (request.body.chat_completion_source) {
 
 ### 18.1 Chat Completion vs Text Completion
 
-The system detects text completion models (`TEXT_COMPLETION_MODELS` list in `chat-completions.js`). For these, the message array is converted to a single prompt string via `convertTextCompletionPrompt()` and sent to `/completions` instead of `/chat/completions`.
+The backend detects text completion models (`TEXT_COMPLETION_MODELS` list in `chat-completions.js`). For these, the message array is converted to a single prompt string via `convertTextCompletionPrompt()` and sent to `/completions` instead of `/chat/completions`.
 
-### 18.2 Claude-Specific Features
+### 18.2 Claude-Specific
 
 - **System prompt**: Separate `system` field (not a message) — populated from leading system messages
-- **Caching**: `cache_control: { type: 'ephemeral' }` added to system prompt and at configurable message depths
-- **Extended thinking**: Budget tokens calculation, prefill adjustment
-- **Beta headers**: Dynamic inclusion for prompt-caching, tools, computer-use
+- **Caching**: `cache_control: { type: 'ephemeral' }` on system prompt and at configurable message depths
+- **Extended thinking**: Budget tokens calculation via `calculateClaudeBudgetTokens()`
+- **Beta headers**: Dynamic inclusion for prompt-caching, tools, computer-use, extended thinking
 
-### 18.3 Gemini-Specific Features
+### 18.3 Gemini-Specific
 
 - **System instruction**: Separate `systemInstruction` field
 - **Safety settings**: Configurable harm category thresholds
-- **Thinking config**: Budget tokens per model tier
+- **Thinking config**: `getGeminiThinkingBudget()` per model tier (Flash, Flash Lite, Pro, 3.0)
 - **Image generation**: Special handling for image-capable models
 - **Web search**: `google_search` tool injection
 
-### 18.4 OpenRouter
+### 18.4 OpenRouter-Specific
 
-- **Media embedding**: Special format for video/audio via `embedOpenRouterMedia()`
-- **Caching**: `cachingSystemPromptForOpenRouter()` adds cache_control to first system message
+- **Media embedding**: `embedOpenRouterMedia()` for video/audio
+- **System prompt caching**: `cachingSystemPromptForOpenRouter()`
 - **Reasoning signatures**: `addOpenRouterSignatures()` for reasoning models
 - **Fallback models**: Support for model arrays
+- **Providers**: Configurable provider preferences
+
+### 18.5 Text Completion Backends
+
+**Kobold** (`src/endpoints/backends/kobold.js`): Sets `use_story: false`, `use_memory: false`, `use_authors_note: false`, `use_world_info: false` — SillyTavern handles all prompt assembly; KoboldAI only does generation. Has retry loop (up to 50 retries with 2.5s delays for 403/503 errors).
+
+**TextGen** (`src/endpoints/backends/text-completions.js`): Forwards `request.body` mostly as-is. Provider-specific key filtering for TogetherAI, InfermaticAI, Featherless, Generic, OpenRouter, vLLM. Ollama gets special body restructuring with `raw: true` mode.
 
 ---
 
@@ -1050,9 +1150,8 @@ The system detects text completion models (`TEXT_COMPLETION_MODELS` list in `cha
 
 ### 19.1 Stop Sequences
 
-**File:** `public/script.js:2861-2910`
-
 ```js
+// public/script.js:2861-2910
 export function getStoppingStrings(isImpersonate, isContinue) {
     const result = [];
     if (power_user.context.names_as_stop_strings) {
@@ -1062,21 +1161,22 @@ export function getStoppingStrings(isImpersonate, isContinue) {
     }
     result.push(...getCustomStoppingStrings());  // User-defined custom stops
     if (power_user.instruct.enabled) {
-        // Instruct mode stop sequences (input/output sequences)
+        // Instruct mode stop sequences (input/output sequences, stop_sequence)
     }
     return result.filter(onlyUnique);
 }
 ```
 
+Instruct stop sequences (`instruct-mode.js:301-367`): Collects `stop_sequence` and optionally all input/output/system sequences when `sequences_as_stop_strings` is enabled. Each is wrapped with leading `\n` if `wrap` is true.
+
 ### 19.2 Message Bias / Logit Bias
 
-**File:** `public/script.js:4206`
-
 ```js
+// script.js:4206
 let { messageBias, promptBias, isUserPromptBias } = getBiasStrings(textareaText, type);
 ```
 
-Bias strings extracted from user input via `{{bias text}}` syntax. For text completion, bias is appended to the last prompt line. For chat completion, it's passed separately.
+Bias strings extracted from user input via `{{bias text}}` syntax. For text completion, bias is appended to the last prompt line. For chat completion, it's an assistant message.
 
 ### 19.3 CFG Guidance Scale
 
@@ -1215,7 +1315,7 @@ If `power_user.collapse_newlines` is true, consecutive newlines (3+) are collaps
 │ 17. {role: "system"} [Continue nudge — continuation]    │
 │ 18. {role: "system"} [Quiet prompt — quiet generation]  │
 │ 19. {role: "system"} [Impersonate prompt]               │
-│ 20. {role: "system"} [Bias prompt]                      │
+│ 20. {role: "assistant"} [Bias / prefill]                │
 │                                                         │
 │ ─── Backend Transformation ──────────────────────────── │
 │                                                         │
@@ -1225,6 +1325,36 @@ If `power_user.collapse_newlines` is true, consecutive newlines (3+) are collaps
 │ For TextGen: collapsed to single prompt string          │
 └─────────────────────────────────────────────────────────┘
 ```
+
+### Tool Calling Integration
+
+Tool calling is woven into the prompt at multiple points:
+
+1. **Budget reservation** (`populateChatCompletion()`, line 1200-1207): When `ToolManager.canPerformToolCalls(type)`, tool definitions are serialized and their token count pre-allocated from the context budget.
+
+2. **Chat history tool messages** (`populateChatHistory()`, lines 939-955): Messages with `tool_invocations` are split into a `tool_calls` assistant message and individual `tool` result messages. These are inserted as a group only if the entire set fits in budget.
+
+3. **Reasoning signatures** (lines 957-959): Messages with a `signature` field (from extended thinking / reasoning models) include it only when the originating API/model matches the current one.
+
+4. **Recursive generation** (`Generate()`, line 5183-5203): After streaming completes, if tool calls were returned, tool invocations are executed and `Generate()` recurses (up to `ToolManager.RECURSE_LIMIT`) with the results injected into the next prompt cycle.
+
+5. **Backend tool registration**: `createGenerationParameters()` (`openai.js:2447`) adds `tools` and `tool_choice` to the API request body when tools are available.
+
+### Group Chat Handling
+
+Group chats modify the prompt pipeline in several ways:
+
+1. **Character rotation**: `generateGroupWrapper()` (`script.js:4128`) selects which group member speaks next, setting `this_chid` and `name2` accordingly.
+
+2. **Multiple character cards**: `getGroupCharacterCardsLazy()` merges descriptions/personalities/scenarios from all enabled group members (overriding individual card fields).
+
+3. **Multiple depth prompts**: Each group member's depth prompt gets its own extension prompt injection (`DEPTH_PROMPT_N`, lines 4251-4255).
+
+4. **Group nudge**: For chat completion APIs, a `groupNudge` message is reserved in the chat history budget — prompting the model to respond as the selected character (line 847-852).
+
+5. **Name handling**: In groups, character names are more aggressively prefixed to messages. For text completion, `names_as_stop_strings` adds all group member names. For chat completion, `names_behavior` modes DEFAULT and FORCE prepend names for non-user group members.
+
+6. **Example messages**: `parseExampleIntoIndividual()` checks against `getGroupNames()` to recognize all group member names as valid assistant-role speakers.
 
 ### Key Decision Points
 
@@ -1260,3 +1390,47 @@ If `power_user.collapse_newlines` is true, consecutive newlines (3+) are collaps
                           │prompt            │
                           └──────────────────┘
 ```
+
+### Key File Reference
+
+| Component | File | Key Function/Line |
+|-----------|------|-------------------|
+| Generation entry point | `public/script.js` | `Generate()` :4065 |
+| Character card fields | `public/script.js` | `getCharacterCardFieldsLazy()` :3231 |
+| Character card typedef | `public/scripts/char-data.js` | `v2CharData` :50 |
+| Story string rendering | `public/scripts/power-user.js` | `renderStoryString()` :2231 |
+| Default story string | `public/scripts/power-user.js` | `defaultStoryString` :86 |
+| System prompt | `public/scripts/sysprompt.js` | `loadSystemPrompts()` |
+| World info scanning | `public/scripts/world-info.js` | `checkWorldInfo()` :4469 |
+| World info entry point | `public/scripts/world-info.js` | `getWorldInfoPrompt()` :894 |
+| Author's note | `public/scripts/authors-note.js` | `setFloatingPrompt()` :326 |
+| Persona injection | `public/script.js` | `addPersonaDescriptionExtensionPrompt()` :3034 |
+| Extension prompt API | `public/script.js` | `setExtensionPrompt()` :8620 |
+| Extension prompt retrieval | `public/script.js` | `getExtensionPrompt()` :3132 |
+| Chat depth injection | `public/script.js` | `doChatInject()` :5400 |
+| Macro engine | `public/scripts/macros/engine/MacroEngine.js` | `evaluate()` |
+| Macro registry | `public/scripts/macros/engine/MacroRegistry.js` | `registerMacro()` |
+| Instruct chat wrapping | `public/scripts/instruct-mode.js` | `formatInstructModeChat()` :387 |
+| Instruct story wrap | `public/scripts/instruct-mode.js` | `formatInstructModeStoryString()` :478 |
+| Instruct generation trigger | `public/scripts/instruct-mode.js` | `formatInstructModePrompt()` :593 |
+| OAI message setup | `public/scripts/openai.js` | `setOpenAIMessages()` :523 |
+| OAI prompt assembly | `public/scripts/openai.js` | `prepareOpenAIMessages()` :1433 |
+| OAI prompt ordering | `public/scripts/openai.js` | `preparePromptsForChatCompletion()` :1258 |
+| OAI budget filling | `public/scripts/openai.js` | `populateChatCompletion()` :1076 |
+| OAI chat history | `public/scripts/openai.js` | `populateChatHistory()` :834 |
+| OAI API call | `public/scripts/openai.js` | `sendOpenAIRequest()` :2808 |
+| ChatCompletion class | `public/scripts/openai.js` | `ChatCompletion` :3568 |
+| Message class | `public/scripts/openai.js` | `Message` :3172 |
+| TokenHandler class | `public/scripts/openai.js` | `TokenHandler` :3081 |
+| PromptManager class | `public/scripts/PromptManager.js` | `PromptManager` :312 |
+| Default prompt order | `public/scripts/PromptManager.js` | `promptManagerDefaultPromptOrder` :2089 |
+| Tokenizers | `public/scripts/tokenizers.js` | `tokenizers` enum :15 |
+| Text completion final | `public/script.js` | `getCombinedPrompt()` :4904 |
+| Prompt converters | `src/prompt-converters.js` | `postProcessPrompt()` :83 |
+| Claude converter | `src/prompt-converters.js` | `convertClaudeMessages()` :196 |
+| Google converter | `src/prompt-converters.js` | `convertGooglePrompt()` :431 |
+| Mistral converter | `src/prompt-converters.js` | `convertMistralMessages()` :698 |
+| Merge messages | `src/prompt-converters.js` | `mergeMessages()` :822 |
+| Chat completion backend | `src/endpoints/backends/chat-completions.js` | `POST /generate` :2010 |
+| Text completion backend | `src/endpoints/backends/text-completions.js` | `POST /generate` :272 |
+| Kobold backend | `src/endpoints/backends/kobold.js` | `POST /generate` :11 |
