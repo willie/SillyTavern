@@ -1,1372 +1,1477 @@
 # SillyTavern Prompt Construction Pipeline
 
-Exhaustive documentation of how the final LLM prompt is assembled from raw inputs to API call.
+Exhaustive documentation of how the final LLM prompt is assembled from raw inputs to the API call.
 
 ---
 
 ## Table of Contents
 
 1. [High-Level Architecture](#1-high-level-architecture)
-2. [Entry Point: Generate()](#2-entry-point-generate)
-3. [Character Definition](#3-character-definition)
-4. [Story String Template](#4-story-string-template)
-5. [System Prompt / Instruction Block](#5-system-prompt--instruction-block)
-6. [User Persona](#6-user-persona)
+2. [Entry Point: `Generate()`](#2-entry-point-generate)
+3. [Two Prompt Paths: Text Completion vs Chat Completion](#3-two-prompt-paths-text-completion-vs-chat-completion)
+4. [Character Definition](#4-character-definition)
+5. [User Persona](#5-user-persona)
+6. [System Prompt / Instruction Block](#6-system-prompt--instruction-block)
 7. [World Info / Lorebook](#7-world-info--lorebook)
-8. [Author's Note / Floating Prompt](#8-authors-note--floating-prompt)
-9. [Example Messages / Few-Shot](#9-example-messages--few-shot)
-10. [Chat History](#10-chat-history)
-11. [Extension Prompt System](#11-extension-prompt-system)
-12. [Context Budget & Assembly](#12-context-budget--assembly)
-13. [Macro System](#13-macro-system)
-14. [Regex Post-Processing](#14-regex-post-processing)
-15. [Instruct Mode Formatting](#15-instruct-mode-formatting)
-16. [OpenAI Chat Completion Assembly](#16-openai-chat-completion-assembly)
-17. [Server-Side Prompt Conversion](#17-server-side-prompt-conversion)
-18. [Model-Specific API Calls](#18-model-specific-api-calls)
-19. [Final Prompt Layout](#19-final-prompt-layout)
+8. [Author's Note](#8-authors-note)
+9. [Extension Prompt Injection System](#9-extension-prompt-injection-system)
+10. [Example Messages / Few-Shot](#10-example-messages--few-shot)
+11. [Chat History](#11-chat-history)
+12. [Text Completion Prompt Assembly](#12-text-completion-prompt-assembly)
+13. [Chat Completion (OpenAI) Prompt Assembly](#13-chat-completion-openai-prompt-assembly)
+14. [Context Budget / Token Management](#14-context-budget--token-management)
+15. [Macro / Variable Substitution](#15-macro--variable-substitution)
+16. [Instruct Mode Formatting](#16-instruct-mode-formatting)
+17. [Regex Post-Processing](#17-regex-post-processing)
+18. [Server-Side Prompt Conversion](#18-server-side-prompt-conversion)
+19. [Model-Specific Formatting](#19-model-specific-formatting)
+20. [Prompt Manager (Chat Completion)](#20-prompt-manager-chat-completion)
+21. [Final Prompt Layout Diagrams](#21-final-prompt-layout-diagrams)
 
 ---
 
 ## 1. High-Level Architecture
 
-SillyTavern constructs prompts through a two-layer pipeline:
+SillyTavern supports two fundamentally different prompt construction paths depending on the backend API:
 
-1. **Client-side assembly** (`public/script.js`, `public/scripts/openai.js`) — decides *what* to include and in what order
-2. **Server-side conversion** (`src/prompt-converters.js`, `src/endpoints/backends/chat-completions.js`) — transforms the assembled prompt into API-specific formats
+| Path | Backends | Output Format |
+|------|----------|---------------|
+| **Text Completion** | KoboldAI, KoboldCpp, text-generation-webui, NovelAI, Horde | Single concatenated string |
+| **Chat Completion** | OpenAI, Claude, Google Gemini, Mistral, Cohere, xAI, AI21, OpenRouter, etc. | Array of `{role, content}` message objects |
 
-The system splits into two major code paths based on the selected API:
+Both paths originate from the same `Generate()` function and share the same input data (character cards, world info, chat history, extensions), but they assemble and format the final prompt differently.
 
-- **Chat Completion APIs** (OpenAI, Claude, Gemini, Mistral, Cohere, etc.) — messages are structured as `{role, content}` objects and assembled via the `ChatCompletion` class
-- **Text Completion APIs** (KoboldAI, NovelAI, TextGenerationWebUI) — the prompt is a single concatenated string
+### Key Files
+
+| File | Purpose |
+|------|---------|
+| `public/script.js` | Main `Generate()` entry point, text completion assembly |
+| `public/scripts/openai.js` | Chat completion assembly (`prepareOpenAIMessages`), `ChatCompletion` class |
+| `public/scripts/PromptManager.js` | `Prompt`, `PromptCollection`, `PromptManager` classes for chat completion ordering |
+| `public/scripts/world-info.js` | World info scanning, activation, injection |
+| `public/scripts/authors-note.js` | Author's note injection |
+| `public/scripts/macros.js` + `public/scripts/macros/` | Macro substitution engine |
+| `public/scripts/instruct-mode.js` | Instruct mode formatting (text completion) |
+| `public/scripts/sysprompt.js` | System prompt management |
+| `public/scripts/personas.js` | User persona management |
+| `public/scripts/char-data.js` | Character card type definitions |
+| `public/scripts/chat-templates.js` | Chat template detection and binding |
+| `public/scripts/cfg-scale.js` | CFG / negative prompt handling |
+| `public/scripts/tokenizers.js` | Client-side token counting |
+| `src/prompt-converters.js` | Server-side prompt format conversion (Claude Messages API, Google, Mistral, etc.) |
+| `src/endpoints/backends/chat-completions.js` | Server-side chat completion routing and API dispatch |
+| `src/endpoints/backends/text-completions.js` | Server-side text completion routing |
+
+---
+
+## 2. Entry Point: `Generate()`
+
+**File:** `public/script.js`
+**Function:** `Generate(type, options, dryRun)` — starts around line 4065
+
+This is the single entry point for all generation requests. The `type` parameter determines the generation mode:
+
+| Type | Meaning |
+|------|---------|
+| `'normal'` | Standard user message → AI reply |
+| `'swipe'` | Regenerate last AI reply (new variant) |
+| `'continue'` | Continue the last AI message |
+| `'impersonate'` | AI writes as the user |
+| `'quiet'` | Hidden generation (used by extensions like Summarize) |
+| `'regenerate'` | Regenerate the last message |
+
+### High-Level Flow
 
 ```
-User clicks Send
-    → sendTextareaMessage()           public/script.js:1597
-    → Generate(type)                  public/script.js:4065
-        ├─ getCharacterCardFields()   Extract character data
-        ├─ getWorldInfoPrompt()       Activate lorebook entries
-        ├─ renderStoryString()        Combine character fields into story block
-        ├─ setFloatingPrompt()        Set up author's note
-        ├─ doChatInject()             Inject depth prompts (non-OpenAI)
-        ├─ Context fitting            Trim to fit token budget
-        ├─ getCombinedPrompt()        Final text assembly (non-OpenAI)
-        └─ prepareOpenAIMessages()    Final message assembly (OpenAI)
-            ├─ preparePromptsForChatCompletion()
-            ├─ populateChatCompletion()
-            ├─ populateChatHistory()
-            ├─ populateDialogueExamples()
-            └─ populateInjectionPrompts()
-    → sendGenerationRequest()         public/script.js:5844
-        → fetch('/api/backends/...')
-            → postProcessPrompt()     src/prompt-converters.js
-            → convertClaudeMessages() / convertGooglePrompt() / etc.
-            → API call
+Generate(type, options, dryRun)
+  1. Validate state (connected, character selected, etc.)
+  2. Process user input — apply regex, append file content, add reasoning
+  3. Run extension interceptors (can abort generation)
+  4. Extract World Info from chat context
+  5. Collect extension prompts (Author's Note, Summarize, Vectors, etc.)
+  6. Resolve character fields (description, personality, scenario, examples)
+  7. Build prompt for selected API:
+     - Text Completion: assemble story string + examples + chat → single string
+     - Chat Completion: call prepareOpenAIMessages() → messages array
+  8. Emit GENERATE_AFTER_DATA event
+  9. If dryRun, return early
+  10. Call API (streaming or non-streaming)
+  11. Process response, handle tool calls, save to chat
 ```
 
 ---
 
-## 2. Entry Point: Generate()
+## 3. Two Prompt Paths: Text Completion vs Chat Completion
 
-**File:** `public/script.js:4065`
-
-```javascript
-export async function Generate(type, {
-    automatic_trigger, force_name2, quiet_prompt, quietToLoud,
-    skipWIAN, force_chid, signal, quietImage, quietName,
-    jsonSchema = null, depth = 0,
-} = {}, dryRun = false)
-```
-
-**Generation types:** `'normal'`, `'continue'`, `'swipe'`, `'regenerate'`, `'impersonate'`, `'quiet'`
-
-The function orchestrates all prompt assembly in this order:
-
-1. **Extract character fields** (line ~4235)
-2. **Process macros and user input** (line ~4260)
-3. **Set up extension prompts** — author's note, persona (line ~4389)
-4. **Get world info** (line ~4405)
-5. **Build story string** from character fields + world info (line ~4473)
-6. **Format chat history** (line ~4543)
-7. **Calculate context budget** — trim messages to fit (line ~4618)
-8. **Assemble final prompt** (line ~4904)
-9. **Branch by API type** — OpenAI path vs text completion path (line ~5021)
-10. **Send request** (line ~5101)
-
----
-
-## 3. Character Definition
-
-### Data Structure
-
-Character cards contain these fields relevant to prompt construction:
-
-| Field | Card Key | Usage |
-|-------|----------|-------|
-| Description | `description` | Character's appearance, background, traits |
-| Personality | `personality` | Personality summary |
-| Scenario | `scenario` | Current scene/situation |
-| First Message | `first_mes` | Opening message of the chat |
-| Example Messages | `mes_example` | Few-shot dialogue examples |
-| System Prompt | `data.system_prompt` | Character-specific system prompt override |
-| Post-History Instructions | `data.post_history_instructions` | Character-specific jailbreak override |
-| Creator Notes | `data.creator_notes` | Metadata notes from character creator |
-| Depth Prompt | `data.extensions.depth_prompt` | Content injected at specific chat depth |
-| Character Version | `data.character_version` | Version number |
-
-### Extraction
-
-**File:** `public/script.js:4235`
+The `main_api` variable determines which path is taken. It is set globally based on the user's API selection.
 
 ```javascript
-let {
-    description, personality, persona, scenario,
-    mesExamples, system, jailbreak, charDepthPrompt, creatorNotes,
-} = getCharacterCardFields();
-```
-
-`getCharacterCardFields()` reads from the active character object (`characters[this_chid]`) and substitutes macros via `substituteParams()` on each field.
-
-### Character Card Parsing
-
-**File:** `src/character-card-parser.js`
-
-Character cards are parsed from PNG files (embedded in tEXt chunks) or JSON files. The parser extracts the `chara` field from the PNG metadata, base64-decodes it, and parses the JSON character data.
-
----
-
-## 4. Story String Template
-
-The "story string" is the primary block that combines character data into a single narrative preamble. It is rendered via Handlebars templating.
-
-### Default Template
-
-**File:** `public/script.js:86`
-
-```javascript
-const defaultStoryString = '{{#if system}}{{system}}\n{{/if}}'
-    + '{{#if description}}{{description}}\n{{/if}}'
-    + '{{#if personality}}{{char}}\'s personality: {{personality}}\n{{/if}}'
-    + '{{#if scenario}}Scenario: {{scenario}}\n{{/if}}'
-    + '{{#if persona}}{{persona}}\n{{/if}}';
-```
-
-Users can customize this template via the Context Settings panel. The template supports Handlebars conditionals (`{{#if}}`) and all macro variables.
-
-### Available Template Parameters
-
-**File:** `public/script.js:4473-4489`
-
-```javascript
-const storyStringParams = {
-    description: description,
-    personality: personality,
-    persona: power_user.persona_description_position == persona_description_positions.IN_PROMPT
-        ? persona : '',
-    scenario: scenario,
-    system: system,
-    char: name2,
-    user: name1,
-    wiBefore: worldInfoBefore,
-    wiAfter: worldInfoAfter,
-    loreBefore: worldInfoBefore,
-    loreAfter: worldInfoAfter,
-    anchorBefore: beforeScenarioAnchor.trim(),
-    anchorAfter: afterScenarioAnchor.trim(),
-    mesExamples: mesExamplesArray.join(''),
-    mesExamplesRaw: mesExamplesRawArray.join(''),
-};
-```
-
-### Rendering
-
-**File:** `public/scripts/power-user.js:2231-2266`
-
-```javascript
-export function renderStoryString(params, { customStoryString, customInstructSettings, customContextSettings } = {}) {
-    const storyString = customStoryString ?? contextSettings.story_string;
-    const compiledTemplate = Handlebars.compile(storyString, { noEscape: true });
-    let output = compiledTemplate(params);
-    output = substituteParams(output, params.user, params.char);
-    output = output.replace(/^\n+/, '');
-    // Add trailing newline if needed
-    if (output.length > 0 && !output.endsWith('\n')) {
-        output += '\n';
-    }
-    return output;
+// script.js ~line 5022
+switch (main_api) {
+    case 'kobold':
+    case 'koboldhorde':
+        generate_data = getKoboldGenerationData(finalPrompt, ...);
+        break;
+    case 'textgenerationwebui':
+        generate_data = await getTextGenGenerationData(finalPrompt, ...);
+        break;
+    case 'novel':
+        generate_data = getNovelGenerationData(finalPrompt, ...);
+        break;
+    case 'openai':
+        let [prompt, counts] = await prepareOpenAIMessages({...}, dryRun);
+        generate_data = { prompt: prompt };
+        break;
 }
 ```
 
-After rendering, if instruct mode is enabled, the story string is wrapped with instruct sequences:
-
-**File:** `public/script.js:4492-4505`
-
-```javascript
-const storyString = renderStoryString(storyStringParams);
-let combinedStoryString = isInstruct
-    ? formatInstructModeStoryString(storyString)
-    : storyString;
-```
-
-The story string can be positioned either in the system prompt area (`IN_PROMPT`) or injected between chat messages at a configurable depth (`IN_CHAT`).
+- For `kobold`, `koboldhorde`, `textgenerationwebui`, `novel`: the text completion path produces a `finalPrompt` string.
+- For `openai`: the chat completion path calls `prepareOpenAIMessages()` which returns a messages array.
 
 ---
 
-## 5. System Prompt / Instruction Block
+## 4. Character Definition
 
-### Default Prompts
+### Card Formats
 
-**File:** `public/scripts/openai.js:99-112`
+**Type definitions:** `public/scripts/char-data.js`
 
-```javascript
-const default_main_prompt =
-    'Write {{char}}\'s next reply in a fictional chat between {{charIfNotGroup}} and {{user}}.';
-const default_nsfw_prompt = '';
-const default_jailbreak_prompt = '';
-const default_impersonation_prompt =
-    '[Write your next reply from the point of view of {{user}}, using the chat history so far as a guideline for the writing style of {{user}}. Don\'t write as {{char}} or system. Don\'t describe actions of {{char}}.]';
-const default_enhance_definitions_prompt =
-    'If you have more knowledge of {{char}}, add to the character\'s lore and personality to enhance them but keep the Character Sheet\'s definitions absolute.';
-const default_wi_format = '{0}';
-const default_new_chat_prompt = '[Start a new Chat]';
-const default_new_group_chat_prompt = '[Start a new group chat. Group members: {{group}}]';
-const default_new_example_chat_prompt = '[Example Chat]';
-const default_continue_nudge_prompt = '[Continue your last message without repeating its original content.]';
-const default_group_nudge_prompt = '[Write the next reply only as {{char}}.]';
-```
+Character cards use the V2 spec (with backwards-compatible V1 wrapper). Fields:
 
-### Prompt Definitions
+| Field | Type | Prompt Role |
+|-------|------|-------------|
+| `name` | string | Character name (used as `{{char}}`) |
+| `description` | string | Injected as "Character Description" |
+| `personality` | string | Injected as "Character Personality" |
+| `scenario` | string | Injected as "Scenario" |
+| `first_mes` | string | First message in new chats |
+| `mes_example` | string | Example dialogue (split on `<START>`) |
+| `system_prompt` | string | Per-character system prompt override |
+| `post_history_instructions` | string | Per-character jailbreak/post-history override |
+| `creator_notes` | string | Available via `{{creatorNotes}}` macro |
+| `character_book` | object | Embedded World Info / lorebook |
+| `extensions.depth_prompt` | `{prompt, depth, role}` | Injected at specified depth in chat |
+| `alternate_greetings` | string[] | Alternative first messages |
 
-**File:** `public/scripts/PromptManager.js:2003-2083`
+### Card Parsing
 
-The `chatCompletionDefaultPrompts` constant defines all available prompt slots. Each prompt has an `identifier`, `name`, `role`, `content`, and optional `marker` flag. Marker prompts are position placeholders that get filled with dynamic content (character description, world info, chat history, etc.).
+**PNG cards:** `src/character-card-parser.js`
+Character data is embedded in PNG `tEXt` chunks as base64 JSON. The `ccv3` chunk (V3 spec) takes precedence over the `chara` chunk (V2).
 
-Key prompt identifiers:
+**CharX archives:** `src/charx.js`
+ZIP-based format containing `card.json` plus auxiliary assets (sprites, backgrounds).
 
-| Identifier | Name | Role | Default Content |
-|-----------|------|------|-----------------|
-| `main` | Main Prompt | system | `Write {{char}}'s next reply...` |
-| `nsfw` | Auxiliary Prompt | system | *(empty)* |
-| `jailbreak` | Post-History Instructions | system | *(empty)* |
-| `enhanceDefinitions` | Enhance Definitions | system | `If you have more knowledge of {{char}}...` |
-| `charDescription` | Char Description | system | *(marker — filled with character description)* |
-| `charPersonality` | Char Personality | system | *(marker)* |
-| `scenario` | Scenario | system | *(marker)* |
-| `personaDescription` | Persona Description | system | *(marker)* |
-| `worldInfoBefore` | World Info (before) | system | *(marker)* |
-| `worldInfoAfter` | World Info (after) | system | *(marker)* |
-| `dialogueExamples` | Chat Examples | system | *(marker)* |
-| `chatHistory` | Chat History | system | *(marker)* |
+### Field Resolution
 
-### Default Prompt Order
+**File:** `public/script.js`, `getCharacterFields()` ~line 3253
 
-**File:** `public/scripts/PromptManager.js:2089-2138`
+Fields are lazily resolved with `createLazyFields()`:
 
 ```javascript
-const promptManagerDefaultPromptOrder = [
-    { 'identifier': 'main', 'enabled': true },
-    { 'identifier': 'worldInfoBefore', 'enabled': true },
-    { 'identifier': 'personaDescription', 'enabled': true },
-    { 'identifier': 'charDescription', 'enabled': true },
-    { 'identifier': 'charPersonality', 'enabled': true },
-    { 'identifier': 'scenario', 'enabled': true },
-    { 'identifier': 'enhanceDefinitions', 'enabled': false },
-    { 'identifier': 'nsfw', 'enabled': true },
-    { 'identifier': 'worldInfoAfter', 'enabled': true },
-    { 'identifier': 'dialogueExamples', 'enabled': true },
-    { 'identifier': 'chatHistory', 'enabled': true },
-    { 'identifier': 'jailbreak', 'enabled': true },
-];
-```
-
-This order is user-customizable per character. Each entry can be toggled on/off.
-
-### Character-Specific Overrides
-
-Characters can override the `main` (system prompt) and `jailbreak` (post-history instructions) prompts. The override is applied in `preparePromptsForChatCompletion()`:
-
-**File:** `public/scripts/openai.js:1386-1404`
-
-```javascript
-if (systemPromptOverride && systemPrompt && systemPrompt.forbid_overrides !== true) {
-    systemPrompt.content = systemPromptOverride;
-    prompts.override(mainReplacement, prompts.index('main'));
+getCharacterFields() → {
+    description: baseChatReplace(character.description),
+    personality: baseChatReplace(character.personality),
+    scenario: chat_metadata['scenario'] || character.scenario,
+    mesExamples: chat_metadata['mes_example'] || character.mes_example,
+    depth_prompt: character.data?.extensions?.depth_prompt?.prompt,
 }
-// Same pattern for jailbreak override
 ```
 
-### System Prompt Presets
+The `baseChatReplace()` function applies macro substitution to character fields. The `scenario` and `mes_example` fields can be overridden per-chat via `chat_metadata`.
+
+### Group Chats
+
+**File:** `public/scripts/group-chats.js`
+
+In group chats, multiple character cards are combined:
+
+- `getGroupCharacterCards()` (line 478) — joins member descriptions into a single block
+- `getGroupCharacterCardsLazy()` (line 498) — lazy version with configurable join prefix/suffix
+- `collectField()` (line 548) — collects and joins a single field from all members
+- `getGroupDepthPrompts()` (line 428) — extracts depth prompts from all group members
+
+Group generation modes (`group_generation_mode`):
+- `SWAP` (0): Generate one character at a time, swap context per character
+- `APPEND` (1): Combine all enabled member cards
+- `APPEND_DISABLED` (2): Combine all member cards including disabled
+
+---
+
+## 5. User Persona
+
+**File:** `public/scripts/personas.js`
+
+### Storage
+
+Persona descriptions are stored in `power_user.persona_descriptions[avatarId]`:
+
+```javascript
+{
+    description: string,       // The persona text
+    position: number,          // Where to inject (see enum below)
+    depth: number,             // Depth for AT_DEPTH mode (default 2)
+    role: number,              // Role (system/user/assistant)
+    lorebook: string,          // Associated world name
+    title: string,             // Display title
+    connections: [{type, id}], // Locks to characters/groups
+}
+```
+
+### Injection Positions
+
+**Enum:** `persona_description_positions` (in `public/scripts/power-user.js` ~line 110)
+
+| Value | Name | Behavior |
+|-------|------|----------|
+| 0 | `IN_PROMPT` | Injected in the story string template via `{{persona}}` |
+| 2 | `TOP_AN` | Prepended to Author's Note |
+| 3 | `BOTTOM_AN` | Appended to Author's Note |
+| 4 | `AT_DEPTH` | Injected as depth prompt at `persona_description_depth` |
+| 9 | `NONE` | Not injected |
+
+### Persona Locking
+
+Personas can be locked to:
+- A specific **chat** — stored in `chat_metadata['persona']`
+- A specific **character or group** — stored in persona's `connections` array
+- **Default** for new chats — stored in persona's `default` flag
+
+Selection priority in `loadPersonaForCurrentChat()` (line 1440): chat lock → character connection → default → no change.
+
+---
+
+## 6. System Prompt / Instruction Block
 
 **File:** `public/scripts/sysprompt.js`
 
-System prompts can be saved and loaded as presets. They support a `post_history` field for instructions placed after chat history.
+### Storage
 
----
+- `system_prompts[]` — array of named presets with `{name, content, post_history}`
+- Active prompt: `power_user.sysprompt.{enabled, name, content, post_history}`
 
-## 6. User Persona
+### Resolution for Text Completion
 
-### Persona Description Positions
-
-**File:** `public/scripts/power-user.js:110-120`
-
-```javascript
-export const persona_description_positions = {
-    IN_PROMPT: 0,      // Included in the story string template
-    AFTER_CHAR: 1,     // (deprecated, same as IN_PROMPT)
-    TOP_AN: 2,         // Prepended to Author's Note
-    BOTTOM_AN: 3,      // Appended to Author's Note
-    AT_DEPTH: 4,       // Injected at specific chat depth
-    NONE: 9,           // Not included
-};
-```
-
-### How Persona Gets Injected
-
-The injection path depends on the configured position:
-
-**IN_PROMPT (0):** Included in `storyStringParams.persona` and rendered by the story string Handlebars template (line `public/script.js:4476`).
-
-**TOP_AN / BOTTOM_AN (2/3):** Merged with the author's note content:
-
-**File:** `public/script.js:3044-3050`
+**File:** `public/script.js` ~line 4456
 
 ```javascript
-const ANWithDesc = power_user.persona_description_position === persona_description_positions.TOP_AN
-    ? `${power_user.persona_description}\n${originalAN}`
-    : `${originalAN}\n${power_user.persona_description}`;
+if (main_api !== 'openai') {
+    if (power_user.sysprompt.enabled) {
+        system = power_user.prefer_character_prompt && characterSystemPrompt
+            ? substituteParams(characterSystemPrompt, { original: power_user.sysprompt.content })
+            : baseChatReplace(power_user.sysprompt.content);
+    } else {
+        system = '';
+    }
+}
 ```
 
-**AT_DEPTH (4):** Registered as a depth-based extension prompt:
+If `prefer_character_prompt` is enabled and the character card has a `system_prompt`, the character's version is used (with the global prompt available as `{{original}}`).
 
-**File:** `public/script.js:3054`
+### Resolution for Chat Completion
 
-```javascript
-setExtensionPrompt(INJECT_TAG, power_user.persona_description,
-    extension_prompt_types.IN_CHAT, power_user.persona_description_depth,
-    true, power_user.persona_description_role);
-```
-
-### Persona Loading Priority
-
-**File:** `public/scripts/personas.js:1440-1519`
-
-1. Chat-locked persona from `chat_metadata['persona']`
-2. Character-connected persona from connection map
-3. Default/user-selected persona
+Handled by the Prompt Manager (see [Section 20](#20-prompt-manager-chat-completion)). The system prompt becomes the `main` prompt entry. Character overrides are applied via `preparePromptsForChatCompletion()`.
 
 ---
 
 ## 7. World Info / Lorebook
 
-### Entry Data Structure
+**File:** `public/scripts/world-info.js` (~5000+ lines)
 
-**File:** `public/scripts/world-info.js:3962-4005`
+### Entry Sources
 
-Each world info entry has these fields:
-
-| Field | Type | Description |
-|-------|------|-------------|
-| `key` | `string[]` | Primary keywords that trigger activation |
-| `keysecondary` | `string[]` | Secondary keywords for selective logic |
-| `content` | `string` | Text injected into prompt when activated |
-| `comment` | `string` | Entry title/memo |
-| `constant` | `boolean` | Always active, ignores keywords |
-| `selective` | `boolean` | Enables secondary key logic |
-| `selectiveLogic` | `enum` | `AND_ANY(0)`, `NOT_ALL(1)`, `NOT_ANY(2)`, `AND_ALL(3)` |
-| `disable` | `boolean` | Completely disabled |
-| `probability` | `number` | Activation percentage (0-100) |
-| `position` | `enum` | Where to place in prompt (see below) |
-| `order` | `number` | Sort priority (higher = earlier insertion) |
-| `depth` | `number` | Message depth when `position=atDepth` |
-| `role` | `enum` | Message role when `position=atDepth` |
-| `scanDepth` | `number?` | Per-entry scan depth override |
-| `caseSensitive` | `boolean?` | Per-entry case sensitivity override |
-| `matchWholeWords` | `boolean?` | Per-entry whole-word matching override |
-| `excludeRecursion` | `boolean` | Skip during recursion scans |
-| `preventRecursion` | `boolean` | Don't use content for recursion scanning |
-| `delayUntilRecursion` | `number` | Delay activation until recursion level N |
-| `group` | `string` | Inclusion group (comma-separated) |
-| `groupOverride` | `boolean` | Priority override in group |
-| `groupWeight` | `number` | Weight for group random selection |
-| `sticky` | `number?` | Messages to stay active after trigger |
-| `cooldown` | `number?` | Messages before re-activatable |
-| `delay` | `number?` | Messages before can first activate |
-| `ignoreBudget` | `boolean` | Ignore token budget limits |
-
-### Position Types
-
-**File:** `public/scripts/world-info.js:857-866`
+World Info entries come from four sources, loaded in parallel by `getSortedEntries()` (line 4347):
 
 ```javascript
-export const world_info_position = {
-    before: 0,       // Before character definition
-    after: 1,        // After character definition
-    ANTop: 2,        // Before Author's Note
-    ANBottom: 3,     // After Author's Note
-    atDepth: 4,      // At specific message depth (with role)
-    EMTop: 5,        // Before Example Messages
-    EMBottom: 6,     // After Example Messages
-    outlet: 7,       // Custom extension outlet
-};
+const [globalLore, characterLore, chatLore, personaLore] = await Promise.all([
+    getGlobalLore(),       // User's selected global lorebooks
+    getCharacterLore(),    // Character's embedded character_book + attached lorebooks
+    getChatLore(),         // Chat-specific lorebook
+    getPersonaLore(),      // Persona's attached lorebook
+]);
 ```
 
-### Activation Pipeline
+### Sorting Strategy
 
-**File:** `public/scripts/world-info.js:4469-5035` (`checkWorldInfo()`)
+Controlled by `world_info_character_strategy`:
 
-The scanning loop runs through three states:
+| Strategy | Behavior |
+|----------|----------|
+| `evenly` | Merge global + character lore, sort by `order` field |
+| `character_first` | Character lore sorted first, then global lore sorted |
+| `global_first` | Global lore sorted first, then character lore sorted |
 
-1. **INITIAL** — First pass, scans chat messages up to configured depth
-2. **RECURSION** — Scans content of previously activated entries for more triggers
-3. **MIN_ACTIVATIONS** — Increases scan depth to meet minimum activation count
+Chat lore always goes first, then persona lore, then the strategy result (line 4382).
 
-For each entry, the system applies these filters in order:
+### Entry Data Structure
 
-1. **Disabled check** — skip if `disable === true`
-2. **Generation type triggers** — must match current generation type
-3. **Character filtering** — include/exclude by character name or tags
-4. **Delay effects** — suppress if within delay period
-5. **Cooldown** — suppress unless sticky
-6. **Recursion delays** — gate by recursion level
-7. **Decorators** — `@@activate` forces activation, `@@dont_activate` blocks
-8. **Constant entries** — always active regardless of keywords
-9. **Sticky entries** — remain active for N messages after trigger
-10. **Primary keyword match** — substring, whole-word, or regex matching
-11. **Secondary keyword logic** — AND_ANY, NOT_ALL, NOT_ANY, AND_ALL
-12. **Probability roll** — random check against configured percentage
-13. **Budget check** — skip if adding would exceed token budget
+Each entry has:
+- `key[]` — primary trigger keywords
+- `keysecondary[]` — secondary keywords
+- `selectiveLogic` — how primary + secondary combine (AND_ANY, AND_ALL, NOT_ANY, NOT_ALL, NONE)
+- `content` — the text to inject
+- `position` — where to inject (see below)
+- `depth` / `role` — for depth-based injection
+- `order` — sorting priority (higher = earlier)
+- `priority` — token budget priority
+- `constant` — always active regardless of keyword matching
+- `disable` — entry is disabled
+- `scanDepth` — override how many messages to scan
+- `caseSensitive` — keyword matching case sensitivity
+- `matchWholeWords` — word boundary matching
+- `useGroupScoring` — group competition mode
+- `automationId` — timed effects identifier
+- `outletName` — for outlet-type entries (accessed via `{{outlet::name}}`)
 
 ### Keyword Matching
 
-**File:** `public/scripts/world-info.js:337-367`
+**Class:** `WorldInfoBuffer` (line ~280)
 
-```javascript
-matchKeys(haystack, needle, entry) {
-    // Regex patterns are detected and tested directly
-    const keyRegex = parseRegexFromString(needle);
-    if (keyRegex) {
-        return keyRegex.test(haystack);
-    }
-    // Otherwise: case-transform, then substring or whole-word match
-    haystack = this.#transformString(haystack, entry);
-    const transformedString = this.#transformString(needle, entry);
-    const matchWholeWords = entry.matchWholeWords ?? world_info_match_whole_words;
-    if (matchWholeWords) {
-        // Multi-word: substring match; single-word: word-boundary regex
-        // ...
-    } else {
-        return haystack.includes(transformedString);
-    }
-}
-```
+The scanning algorithm:
+1. Collect chat messages (reversed, up to `world_info_depth` messages)
+2. Optionally include character defs, author's note, other extension prompts (`scan` flag)
+3. For each entry, check if primary keys match in the scanned text
+4. Apply secondary key logic per `selectiveLogic`
+5. Entries with `constant: true` always activate
+6. Support for regex keys (entries with `/pattern/flags` syntax)
+7. **Recursive scanning** — when entries activate, their content is added to the scan buffer and scanning repeats (up to `world_info_recursive_scan` iterations)
 
-### Scan Buffer
+### Decorators
 
-The `WorldInfoBuffer` class (`public/scripts/world-info.js:199-260`) manages what text is scanned:
+Entries can have decorator prefixes (line 4410):
+- Lines starting with `@@` are parsed as decorators
+- `@@@` prefix = fallback decorator (only used if primary not recognized)
+- Known decorators defined in `KNOWN_DECORATORS` array
 
-- **Chat messages** by depth (newest first)
-- **Recursion buffer** — accumulated content from activated entries
-- **Inject buffer** — extension prompts marked with `scan: true`
-- **Global scan data** — optionally includes character description, personality, scenario, persona, creator notes, and depth prompt content
+### Injection Positions
 
-### Budget System
+**Enum:** `world_info_position`
 
-**File:** `public/scripts/world-info.js:4496-4503`
-
-```javascript
-let budget = Math.round(world_info_budget * maxContext / 100) || 1;
-if (world_info_budget_cap > 0 && budget > world_info_budget_cap) {
-    budget = world_info_budget_cap;
-}
-```
-
-Default: 25% of context. Entries with `ignoreBudget: true` bypass this limit.
-
-### Inclusion Groups
-
-When multiple entries share a group name, only one activates per group. Selection is by:
-1. **Priority override** — entry with `groupOverride: true` and highest `order` wins
-2. **Weighted random** — entries selected by `groupWeight` (default 100)
-
-### Insertion and Sorting
-
-**File:** `public/scripts/world-info.js:4954-5015`
-
-Entries are sorted by `order` (descending — higher order = earlier insertion). Each entry's content is placed according to its `position` setting into separate arrays: `WIBeforeEntries`, `WIAfterEntries`, `ANTopEntries`, `ANBottomEntries`, `WIDepthEntries`, `EMEntries`, `WIOutletEntries`.
-
-### Integration with Prompt Assembly
-
-**File:** `public/scripts/world-info.js:894-917`
-
-```javascript
-export async function getWorldInfoPrompt(chat, maxContext, isDryRun, globalScanData) {
-    const activatedWorldInfo = await checkWorldInfo(chat, maxContext, isDryRun, globalScanData);
-    return {
-        worldInfoString,      // Combined before + after
-        worldInfoBefore,      // Entries with position: before
-        worldInfoAfter,       // Entries with position: after
-        worldInfoExamples,    // Entries around example messages
-        worldInfoDepth,       // Entries at specific depths
-        anBefore,             // Entries before author's note
-        anAfter,              // Entries after author's note
-        outletEntries,        // Entries for custom outlets
-    };
-}
-```
-
----
-
-## 8. Author's Note / Floating Prompt
-
-### Data Structure
-
-**File:** `public/scripts/authors-note.js:28-40`
-
-```javascript
-export const metadata_keys = {
-    prompt: 'note_prompt',
-    interval: 'note_interval',
-    depth: 'note_depth',
-    position: 'note_position',
-    role: 'note_role',
-};
-
-const chara_note_position = {
-    replace: 0,    // Replace main AN with character AN
-    before: 1,     // Character AN before main AN
-    after: 2,      // Character AN after main AN
-};
-```
-
-Defaults: depth=4, position=IN_CHAT (1), interval=1 (every message), role=SYSTEM.
-
-### Storage
-
-- **Chat-level:** Stored in `chat_metadata[metadata_keys.*]`
-- **Character-specific:** Stored in `extension_settings.note.chara[]` with fields: `name`, `prompt`, `useChara`, `position`
-- **Global defaults:** Stored in `extension_settings.note.default*`
-
-### Interval Logic
-
-**File:** `public/scripts/authors-note.js:332-363`
-
-The author's note is injected every N user messages based on `note_interval`. When interval is 1, it inserts on every generation. The check uses modulo arithmetic: `lastMessageNumber % interval === 0`.
-
-### Injection
-
-**File:** `public/scripts/authors-note.js:383-390`
-
-```javascript
-context.setExtensionPrompt(
-    MODULE_NAME,                                 // '2_floating_prompt'
-    String(prompt),                              // Note content
-    chat_metadata[metadata_keys.position],       // Position type
-    chat_metadata[metadata_keys.depth],          // Depth
-    extension_settings.note.allowWIScan,         // Include in WI scan
-    chat_metadata[metadata_keys.role],           // Role
-);
-```
-
-Position types (from `extension_prompt_types`):
-- `IN_PROMPT (0)` → end of system prompt section
-- `IN_CHAT (1)` → between chat messages at specified depth
-- `BEFORE_PROMPT (2)` → start of system prompt section
-
-Character-specific notes combine with the main note according to `chara_note_position` (replace/before/after).
-
----
-
-## 9. Example Messages / Few-Shot
-
-### Format in Character Cards
-
-Example messages in character cards use this format:
-
-```
-<START>
-{{user}}: Hello there!
-{{char}}: *waves* Hello! How can I help you today?
-
-<START>
-{{user}}: What do you like?
-{{char}}: I enjoy many things! Reading, exploring, and good conversation.
-```
-
-### Parsing
-
-**File:** `public/script.js:3317-3331`
-
-```javascript
-export function parseMesExamples(examplesStr, isInstruct) {
-    if (!examplesStr || examplesStr === '<START>') {
-        return [];
-    }
-    if (!examplesStr.startsWith('<START>')) {
-        examplesStr = '<START>\n' + examplesStr.trim();
-    }
-    const blockHeading = (main_api === 'openai' || isInstruct)
-        ? '<START>\n'
-        : exampleSeparator;
-    const splitExamples = examplesStr
-        .split(/<START>/gi).slice(1)
-        .map(block => `${blockHeading}${block.trim()}\n`);
-    return splitExamples;
-}
-```
-
-### OpenAI: Parsed into Individual Messages
-
-**File:** `public/scripts/openai.js:678-736` (`parseExampleIntoIndividual()`)
-
-Each example block is split into individual messages by detecting `name1:` (user) and `name2:` (character) prefixes. The result:
-
-```javascript
-[
-    { role: 'system', content: 'Hello there!', name: 'example_user' },
-    { role: 'system', content: '*waves* Hello!...', name: 'example_assistant' },
-]
-```
-
-All examples use `role: 'system'` with `name` distinguishing user vs assistant examples.
-
-### Insertion into Prompt
-
-**File:** `public/scripts/openai.js:992-1025` (`populateDialogueExamples()`)
-
-Each example block is preceded by a `[Example Chat]` separator message. Examples are added to the `dialogueExamples` collection. If `canAffordAll()` returns false for a block, remaining examples are dropped.
-
-### Instruct Mode Formatting
-
-**File:** `public/scripts/instruct-mode.js:511-575` (`formatInstructModeExamples()`)
-
-When instruct mode is active, examples are wrapped with the model's input/output sequences instead of using role-based formatting.
+| Position | Behavior |
+|----------|----------|
+| `before` | Concatenated into `worldInfoBefore` — placed before character defs in story string |
+| `after` | Concatenated into `worldInfoAfter` — placed after character defs in story string |
+| `EMTop` | Injected at the top of example messages |
+| `EMBottom` | Injected at the bottom of example messages |
+| `ANTop` | Prepended to Author's Note |
+| `ANBottom` | Appended to Author's Note |
+| `atDepth` | Injected at specified depth in chat history with specified role |
+| `outlet` | Available to `{{outlet::name}}` macro, not directly injected |
 
 ### Token Budget
 
-- When `power_user.pin_examples` is **true**: all examples are always included (pinned)
-- When **false**: examples are added incrementally; when context budget is exceeded, remaining examples are dropped
-- During context overflow, examples are removed **before** chat messages
+World Info has its own token budget, calculated as:
+```
+budget = min(maxContext * (world_info_budget / 100), world_info_budget_cap)
+```
 
----
+Entries are sorted by `order` and added until the budget is exhausted. Higher-priority entries (lower `priority` number) are preserved when budget is tight.
 
-## 10. Chat History
+### Return Value
 
-### Message Selection
-
-Chat messages are processed from the active chat array. The system handles two paths:
-
-#### OpenAI Path
-
-**File:** `public/scripts/openai.js:834-983` (`populateChatHistory()`)
-
-Messages are iterated **from newest to oldest** (the array is reversed). Each message is wrapped as a `Message` object and checked against the token budget via `canAfford()`. The loop breaks on the first message that doesn't fit.
-
+`checkWorldInfo()` returns (line 5034):
 ```javascript
-const chatPool = [...messages].reverse();
-for (let index = 0; index < chatPool.length; index++) {
-    const chatMessage = /* ... */;
-    if (chatCompletion.canAfford(chatMessage)) {
-        chatCompletion.insertAtStart(chatMessage, 'chatHistory');
-    } else {
-        break;
-    }
+{
+    worldInfoBefore,    // Joined string for "before" entries
+    worldInfoAfter,     // Joined string for "after" entries
+    EMEntries,          // Array of {position, content} for example message injection
+    WIDepthEntries,     // Array of {depth, entries[], role} for depth injection
+    ANBeforeEntries,    // Array of strings for AN top
+    ANAfterEntries,     // Array of strings for AN bottom
+    outletEntries,      // Map of outlet name → content arrays
+    allActivatedEntries // Set of all activated entries
 }
 ```
 
-Special messages inserted into chat history:
-- **New Chat marker:** `[Start a new Chat]` inserted at the start
-- **Group Nudge:** `[Write the next reply only as {{char}}.]` appended at the end (groups only)
-- **Continue Nudge:** `[Continue your last message...]` appended at the end (continue mode)
+---
 
-#### Text Completion Path
+## 8. Author's Note
 
-**File:** `public/script.js:4644-4698`
+**File:** `public/scripts/authors-note.js`
 
-Messages are iterated from oldest to newest. Each message's token count is accumulated and compared against `this_max_context`. Iteration stops when the budget is exceeded.
+The Author's Note (AN) is an editorial injection that uses the extension prompt system.
 
-### Truncation Strategy
+### Storage
 
-**File:** `public/script.js:4865-4891` (`checkPromptSize()`)
+Stored in `chat_metadata` per-chat:
+- `chat_metadata['note_prompt']` — the AN text
+- `chat_metadata['note_prompt_token_counter']` — position: `extension_prompt_types` value
+- `chat_metadata['note_depth']` — injection depth (default 4)
+- `chat_metadata['note_role']` — injection role (system/user/assistant)
+- `chat_metadata['note_interval']` — how often to inject (every N messages; 0 = disabled)
 
-A recursive function that removes content when the prompt exceeds the context limit:
+### Character-Specific AN
 
-1. First, remove unpinned example messages (one at a time)
-2. Then, remove the oldest chat messages (FIFO from the front)
-3. Recurse until the prompt fits
-
-### Summarization
-
-SillyTavern has **no built-in chat summarization**. The `1_memory` extension (Tavern Extras) provides external summarization that injects a summary as an extension prompt. This is treated as a regular system prompt slot:
-
-**File:** `public/scripts/openai.js:1279-1286`
-
+Characters can override the AN via `character.data.extensions.depth_prompt`:
 ```javascript
-const summary = extensionPrompts['1_memory'];
-if (summary && summary.value) systemPrompts.push({
-    role: getPromptRole(summary.role),
-    content: summary.value,
-    identifier: 'summary',
-});
+{
+    prompt: string,  // The text
+    depth: number,   // Injection depth
+    role: string,    // Role name
+}
 ```
 
-### Regex Processing of Chat Messages
+### Injection
 
-Before chat messages enter the prompt, they pass through `getRegexedString()` which applies user-defined regex scripts targeting `AI_OUTPUT` or `USER_INPUT` placements.
+The AN is registered as extension prompt `'2_floating_prompt'` via:
+```javascript
+// authors-note.js ~line 383
+context.setExtensionPrompt(
+    MODULE_NAME,           // '2_floating_prompt'
+    String(prompt),
+    chat_metadata[metadata_keys.position],
+    chat_metadata[metadata_keys.depth],
+    extension_settings.note.allowWIScan,
+    chat_metadata[metadata_keys.role]
+);
+```
+
+World Info entries positioned at `ANTop` / `ANBottom` are merged into the AN text (line 5021-5025 of world-info.js).
 
 ---
 
-## 11. Extension Prompt System
+## 9. Extension Prompt Injection System
 
-Extensions can inject content at any position and depth in the prompt via `setExtensionPrompt()`.
+**File:** `public/script.js` — functions around line 3060-3160
+
+### Core Data Structure
+
+```javascript
+// script.js line 595
+export let extension_prompts = {};
+```
+
+Each key maps to:
+```javascript
+{
+    value: string,          // The prompt text
+    position: number,       // extension_prompt_types enum value
+    depth: number,          // For IN_CHAT: how many messages from bottom
+    scan: boolean,          // Include in World Info scanning
+    role: number,           // extension_prompt_roles enum value
+    filter: function|null,  // Optional async filter function
+}
+```
 
 ### Registration
 
-**File:** `public/script.js:8620-8628`
+Extensions call `setExtensionPrompt()` to register their prompts:
 
 ```javascript
-export function setExtensionPrompt(key, value, position, depth, scan = false,
-    role = extension_prompt_roles.SYSTEM, filter = null) {
-    extension_prompts[key] = {
-        value: String(value),
-        position: Number(position),    // IN_PROMPT(0), IN_CHAT(1), BEFORE_PROMPT(2)
-        depth: Number(depth),          // 0 = last message, up to 10000
-        scan: !!scan,                  // Include in world info scanning
-        role: Number(role),            // SYSTEM(0), USER(1), ASSISTANT(2)
-        filter: filter,                // Optional filter function
-    };
+// script.js ~line 3060
+export function setExtensionPrompt(key, value, position, depth, scan, role, filter) {
+    extension_prompts[key] = { value, position, depth, scan, role, filter };
 }
 ```
 
-### Known Extension Keys
+### Position Types
 
-| Key | Source | Description |
-|-----|--------|-------------|
-| `1_memory` | Memory/Summarize extension | Chat summary |
-| `2_floating_prompt` | Authors Note | Floating prompt injection |
-| `3_vectors` | Vectors extension | Vector DB retrieved context |
-| `4_vectors_data_bank` | Data Bank extension | Data bank retrieved context |
-| `chromadb` | Smart Context | ChromaDB retrieved context |
-| `PERSONA_DESCRIPTION` | Persona system | User persona at depth |
-| `DEPTH_PROMPT` | Character card | Character depth prompt |
-| `__STORY_STRING__` | Story string | Story string as in-chat injection |
-| `QUIET_PROMPT` | Generate function | Quiet generation prompt |
+**Enum:** `extension_prompt_types`
+
+| Value | Name | Behavior |
+|-------|------|----------|
+| 0 | `BEFORE_PROMPT` | Before the story string (text completion) or at start of prompt (chat completion) |
+| 1 | `IN_PROMPT` | After the story string / end of system section |
+| 2 | `IN_CHAT` | Injected at `depth` messages from the bottom of chat |
+| 3 | `AFTER_PROMPT` | After everything else |
+| 99 | `NONE` | Registered but not injected |
+
+### Role Types
+
+**Enum:** `extension_prompt_roles`
+
+| Value | Name |
+|-------|------|
+| 0 | `SYSTEM` |
+| 1 | `USER` |
+| 2 | `ASSISTANT` |
 
 ### Retrieval
 
-**File:** `public/script.js:3132-3160` (`getExtensionPrompt()`)
+`getExtensionPrompt()` (line 3132) collects all registered prompts matching a position/depth/role, applies filters, joins with separator, runs `substituteParams()`, and returns the combined string.
 
-Filters `extension_prompts` by position, depth, and role. Joins matching prompts with a separator.
+### Known Extension Prompt Keys
 
-### Depth Injection (Non-OpenAI)
+| Key | Source | Typical Position |
+|-----|--------|-----------------|
+| `'1_memory'` | Summarize extension | Configurable (default IN_PROMPT) |
+| `'2_floating_prompt'` | Author's Note | Configurable (default IN_CHAT depth 4) |
+| `'3_vectors'` | Vectors (chat) | Configurable (default IN_PROMPT) |
+| `'4_vectors_data_bank'` | Vectors (Data Bank) | Configurable (default IN_PROMPT depth 4) |
+| `'chromadb'` | ChromaDB extension | IN_CHAT |
+| `'PERSONA_DESCRIPTION'` | Persona (AT_DEPTH mode) | IN_CHAT at configured depth |
+| `'STORY_STRING'` | Story string (when IN_CHAT mode) | IN_CHAT at configured depth |
+| `'CUSTOM_WI_DEPTH_ROLE(d,r)'` | World Info depth entries | IN_CHAT at entry's depth/role |
 
-**File:** `public/script.js:5400-5448` (`doChatInject()`)
+### Injection into Text Completion
 
-Iterates through each depth level, collects matching extension prompts, and splices them into the chat message array at the appropriate position.
+**File:** `public/script.js`, `doChatInject()` ~line 5400
 
-### Depth Injection (OpenAI)
-
-**File:** `public/scripts/openai.js:759-824` (`populateInjectionPrompts()`)
-
-Collects prompts with `injection_position === ABSOLUTE`, groups by `injection_depth` and `injection_order`, and inserts them into the flattened message array at the correct positions.
-
----
-
-## 12. Context Budget & Assembly
-
-### Budget Calculation
-
-**OpenAI Path** (`public/scripts/openai.js:1458`):
+For text completion, IN_CHAT extension prompts are injected directly into the chat message array:
 
 ```javascript
-chatCompletion.setTokenBudget(openai_max_context, openai_max_tokens);
-// tokenBudget = openai_max_context - openai_max_tokens
-```
-
-**Text Completion Path** (`public/script.js:5702-5739`):
-
-```javascript
-export function getMaxContextSize(overrideResponseLength = null) {
-    if (main_api == 'openai') {
-        return oai_settings.openai_max_context - (overrideResponseLength || oai_settings.openai_max_tokens);
+async function doChatInject(messages, isContinue) {
+    messages.reverse();
+    for (let i = 0; i <= maxDepth; i++) {
+        for (const role of [SYSTEM, USER, ASSISTANT]) {
+            const prompt = await getExtensionPrompt(IN_CHAT, i, '\n', role);
+            if (prompt) {
+                // Insert at depth position in the messages array
+                messages.splice(depth + totalInserted, 0, {
+                    name: roleName,
+                    is_user: role === USER,
+                    mes: prompt,
+                });
+            }
+        }
     }
-    // KoboldAI, NovelAI, TextGen: max_context - amount_gen
-    return max_context - (overrideResponseLength || amount_gen);
+    messages.reverse();
 }
 ```
 
-**Defaults** (`public/scripts/power-user.js:78-79`):
+### Injection into Chat Completion
+
+**File:** `public/scripts/openai.js`, `populationInjectionPrompts()` ~line 759
+
+For chat completion, IN_CHAT prompts are inserted as Message objects at the appropriate depth within the ChatCompletion structure.
+
+---
+
+## 10. Example Messages / Few-Shot
+
+### Source
+
+Example messages come from the character card's `mes_example` field (or `chat_metadata['mes_example']` override).
+
+### Parsing
+
+**File:** `public/script.js`, `parseMesExamples()` ~line 3317
 
 ```javascript
-export const MAX_CONTEXT_DEFAULT = 8192;
-export const MAX_RESPONSE_DEFAULT = 2048;
-```
-
-### Budget Reservation System (OpenAI)
-
-The `ChatCompletion` class uses a reservation pattern:
-
-1. **Reserve** tokens for must-have elements (new chat message, nudges, control prompts)
-2. **Fill** remaining budget with chat history and examples
-3. **Free** reserved budget and insert the reserved messages
-
-```javascript
-chatCompletion.reserveBudget(3);              // Assistant priming tokens
-chatCompletion.reserveBudget(newChatMessage);  // [Start a new Chat]
-// ... fill chat history ...
-chatCompletion.freeBudget(newChatMessage);
-chatCompletion.insertAtStart(newChatMessage, 'chatHistory');
-```
-
-### Affordability Check
-
-**File:** `public/scripts/openai.js:3736-3747`
-
-```javascript
-canAfford(message) {
-    return 0 <= this.tokenBudget - message.getTokens();
+export function parseMesExamples(examplesStr, isInstruct) {
+    const blockHeading = (main_api === 'openai' || isInstruct)
+        ? '<START>\n'
+        : exampleSeparator;   // power_user.context.example_separator
+    return examplesStr.split(/<START>/gi)
+        .slice(1)
+        .map(block => `${blockHeading}${block.trim()}\n`);
 }
 ```
 
-### CFG Prompt Budget Reduction
+Each `<START>` delimiter creates a new example block. The separator differs between APIs.
 
-When Classifier Free Guidance is enabled, the context budget is reduced by the token count of the longest CFG prompt:
+### World Info Example Entries
 
-**File:** `public/script.js:4363-4374`
+World Info entries with `EMTop` or `EMBottom` position are injected into the examples array:
+- `EMTop` entries are `.unshift()`-ed (added to beginning)
+- `EMBottom` entries are `.push()`-ed (added to end)
+
+### For Text Completion
+
+Examples are included in the prompt between the story string and the chat history. The number of examples included is budget-limited:
 
 ```javascript
-const decrement = Math.max(negativePromptTokenCount, positivePromptTokenCount);
-this_max_context -= decrement;
+// script.js ~line 4728
+for (let example of mesExamplesArray) {
+    tokenCount += await getTokenCountAsync(example);
+    if (tokenCount < this_max_context) count_exm_add++;
+    else break;
+}
+```
+
+If `power_user.pin_examples` is true, all examples are always included.
+
+### For Chat Completion
+
+**File:** `public/scripts/openai.js`, `populateDialogueExamples()` ~line 992
+
+Examples are converted to message objects and added to a `dialogueExamples` MessageCollection. Each example block is preceded by a `newChat` system message (e.g., "[Start a new chat]"). Addition stops when the budget is exceeded.
+
+---
+
+## 11. Chat History
+
+### Message Processing
+
+Before prompt assembly, chat messages go through several transformations:
+
+**File:** `public/script.js` ~line 4270
+
+1. **Regex processing** — each message is run through `getRegexedString()` with placement type `USER_INPUT` or `AI_OUTPUT` based on `is_user` flag
+2. **File content appending** — `appendFileContent()` adds inline file content to messages
+3. **Title appending** — media titles are appended to message text
+4. **Reasoning injection** — `PromptReasoning` adds reasoning content (`extra.reasoning`) with duration tracking
+
+### For Text Completion
+
+**File:** `public/script.js` ~line 4543
+
+Messages are formatted via `formatMessageHistoryItem()`:
+
+```javascript
+// script.js ~line 5600+
+function formatMessageHistoryItem(chatItem, isInstruct, forceOutputSequence) {
+    const isNarratorType = chatItem?.extra?.type === system_message_types.NARRATOR;
+    const characterName = chatItem?.name || name2;
+    const shouldPrependName = !isNarratorType;
+
+    if (isInstruct) {
+        return formatInstructModeChat(characterName, chatItem.mes,
+            chatItem.is_user, isNarratorType, ...);
+    }
+    return shouldPrependName
+        ? `${itemName}: ${chatItem.mes}\n`
+        : `${chatItem.mes}\n`;
+}
+```
+
+The chat history is then assembled into the `mesSend[]` array and fit to the context budget (see [Section 14](#14-context-budget--token-management)).
+
+### For Chat Completion
+
+**File:** `public/scripts/openai.js`, `populateChatHistory()` ~line 834
+
+Messages are added to the ChatCompletion in reverse order (newest first) until the token budget is exhausted:
+
+```javascript
+for (let i = chatPrompts.length - 1; i >= 0; i--) {
+    const chatMessage = await Message.createAsync(role, content, identifier);
+    // Handle media (images, video, audio)
+    // Handle tool invocations
+    // Handle reasoning signatures
+    if (chatCompletion.canAfford(chatMessage)) {
+        chatCompletion.insertAtStart(chatMessage, 'chatHistory');
+    } else {
+        break;  // Budget exceeded, stop adding messages
+    }
+}
 ```
 
 ---
 
-## 13. Macro System
+## 12. Text Completion Prompt Assembly
 
-### Architecture
+For non-OpenAI APIs, the prompt is a single concatenated string.
 
-The macro system uses the Chevrotain parser library for robust tokenization and evaluation.
+### Story String Template
 
-**Pipeline:** `MacroEngine.evaluate()` → `MacroParser.parseDocument()` → `MacroCstWalker.evaluateDocument()` → `MacroRegistry.executeMacro()`
+**File:** `public/scripts/power-user.js` ~line 86
 
-**File:** `public/scripts/macros/engine/MacroEngine.js:31-71`
+Default template (Handlebars):
+```handlebars
+{{#if system}}{{system}}
+{{/if}}{{#if description}}{{description}}
+{{/if}}{{#if personality}}{{char}}'s personality: {{personality}}
+{{/if}}{{#if scenario}}Scenario: {{scenario}}
+{{/if}}{{#if persona}}{{persona}}
+{{/if}}
+```
+
+The template is configurable via `power_user.context.story_string` and rendered with Handlebars:
 
 ```javascript
-evaluate(input, env) {
-    const preProcessed = this.#runPreProcessors(input, env);
-    const { cst } = MacroParser.parseDocument(preProcessed);
-    let evaluated = MacroCstWalker.evaluateDocument({ text: preProcessed, cst, env, resolveMacro });
-    const result = this.#runPostProcessors(evaluated, env);
-    return result;
+// power-user.js ~line 2231
+export function renderStoryString(params) {
+    const template = power_user.context.story_string;
+    const compiled = Handlebars.compile(template, { noEscape: true });
+    let output = compiled(params);
+    output = substituteParams(output);
+    return output;
 }
 ```
 
-### Pre-Processing
+### Story String Parameters
 
-Converts legacy syntax:
-- `<USER>` → `{{user}}`
-- `<BOT>` / `<CHAR>` → `{{char}}`
-- `<GROUP>` → `{{group}}`
-- `{{time_UTC+2}}` → `{{time::UTC+2}}`
-
-### Post-Processing
-
-- Unescapes `\{` → `{` and `\}` → `}`
-- Removes `{{trim}}` macros and surrounding whitespace
-
-### Complete Macro List
-
-**Names/Environment** (`env-macros.js`):
-`{{user}}`, `{{char}}`, `{{group}}`, `{{charIfNotGroup}}`, `{{groupNotMuted}}`, `{{notChar}}`
-
-**Character Card** (`env-macros.js`):
-`{{charPrompt}}`, `{{charInstruction}}`, `{{charDescription}}` / `{{description}}`, `{{charPersonality}}` / `{{personality}}`, `{{charScenario}}` / `{{scenario}}`, `{{persona}}`, `{{mesExamples}}`, `{{mesExamplesRaw}}`, `{{charDepthPrompt}}`, `{{charCreatorNotes}}` / `{{creatorNotes}}`, `{{charVersion}}` / `{{version}}`
-
-**Time/Date** (`time-macros.js`):
-`{{time}}`, `{{time::UTC±offset}}`, `{{date}}`, `{{weekday}}`, `{{isotime}}`, `{{isodate}}`, `{{datetimeformat::format}}`, `{{idleDuration}}`, `{{timeDiff::left::right}}`
-
-**Chat** (`chat-macros.js`):
-`{{lastMessage}}`, `{{lastMessageId}}`, `{{lastUserMessage}}`, `{{lastCharMessage}}`, `{{firstIncludedMessageId}}`, `{{firstDisplayedMessageId}}`, `{{lastSwipeId}}`, `{{currentSwipeId}}`
-
-**Variables** (`variable-macros.js`):
-`{{setvar::name::value}}`, `{{getvar::name}}`, `{{addvar::name::value}}`, `{{incvar::name}}`, `{{decvar::name}}`, `{{setglobalvar::name::value}}`, `{{getglobalvar::name}}`, `{{addglobalvar::name::value}}`, `{{incglobalvar::name}}`, `{{decglobalvar::name}}`
-
-**Instruct** (`instruct-macros.js`):
-`{{instructStoryStringPrefix}}`, `{{instructStoryStringSuffix}}`, `{{instructUserPrefix}}`, `{{instructUserSuffix}}`, `{{instructAssistantPrefix}}`, `{{instructAssistantSuffix}}`, `{{instructSystemPrefix}}`, `{{instructSystemSuffix}}`, `{{instructFirstAssistantPrefix}}`, `{{instructLastAssistantPrefix}}`, `{{instructStop}}`, `{{systemPrompt}}`, `{{defaultSystemPrompt}}`, `{{exampleSeparator}}`, `{{chatStart}}`
-
-**Core/Utility** (`core-macros.js`):
-`{{space}}`, `{{newline}}`, `{{noop}}`, `{{trim}}`, `{{input}}`, `{{maxPrompt}}`, `{{reverse::string}}`, `{{roll::NdM}}`, `{{random::a::b::c}}`, `{{pick::a::b::c}}`, `{{banned::word}}`, `{{outlet::key}}`, `{{//comment}}`
-
-**State** (`state-macros.js`):
-`{{model}}`, `{{isMobile}}`, `{{lastGenerationType}}`
-
-### When Macros Are Applied
-
-Macros are substituted via `substituteParams()` at multiple points:
-- Story string rendering (during `renderStoryString()`)
-- Prompt content (during `PromptManager.preparePrompt()`)
-- Extension prompt values (during `getExtensionPrompt()`)
-- Instruct mode sequences (during `formatInstructModeChat()`)
-- World info entry keys and content (during scanning)
-
----
-
-## 14. Regex Post-Processing
-
-### Regex Script Types
-
-**File:** `public/scripts/extensions/regex/engine.js:11-16`
+**File:** `public/script.js` ~line 4473
 
 ```javascript
-export const SCRIPT_TYPES = {
-    GLOBAL: 0,     // Applied globally
-    PRESET: 2,     // Applied per preset
-    SCOPED: 1,     // Applied per character/chat
+const storyStringParams = {
+    description,                    // Character description
+    personality,                    // Character personality
+    persona,                        // User persona (if IN_PROMPT position)
+    scenario,                       // Scenario text
+    system,                         // System prompt (if enabled)
+    char: name2,                    // Character name
+    user: name1,                    // User name
+    wiBefore: worldInfoBefore,      // WI "before" entries
+    wiAfter: worldInfoAfter,        // WI "after" entries
+    loreBefore: worldInfoBefore,    // Alias
+    loreAfter: worldInfoAfter,      // Alias
+    anchorBefore: beforeScenarioAnchor,  // BEFORE_PROMPT extension prompts
+    anchorAfter: afterScenarioAnchor,    // IN_PROMPT extension prompts
+    mesExamples: mesExamplesArray.join(''),
+    mesExamplesRaw: mesExamplesRawArray.join(''),
 };
 ```
 
-### Placement Targets
+### Story String Positioning
 
-**File:** `public/scripts/extensions/regex/engine.js:281-292`
-
-```javascript
-export const regex_placement = {
-    MD_DISPLAY: 0,     // (deprecated)
-    USER_INPUT: 1,     // Applied to user messages
-    AI_OUTPUT: 2,      // Applied to AI messages
-    SLASH_COMMAND: 3,   // Applied to slash commands
-    WORLD_INFO: 5,      // Applied to world info content
-    REASONING: 6,       // Applied to reasoning/thinking output
-};
-```
-
-### Application
-
-**File:** `public/scripts/extensions/regex/engine.js:334-380`
-
-`getRegexedString(rawString, placement, options)` iterates through all enabled regex scripts matching the target placement and runs each script's find/replace pattern. Scripts can target:
-- Only markdown display (`markdownOnly`)
-- Only prompt generation (`promptOnly`)
-- Specific depth ranges (`minDepth`, `maxDepth`)
-
-Regex scripts are applied to:
-- Chat messages during prompt assembly (`public/script.js:4281`)
-- World info entry content during insertion
-- AI output during display
-
----
-
-## 15. Instruct Mode Formatting
-
-Instruct mode wraps all messages with model-specific instruction sequences for instruction-tuned models.
-
-### Preset Structure
-
-**File:** `public/scripts/instruct-mode.js:23-48`
+The story string can be placed at the top of the prompt (default) or injected at a depth within chat:
 
 ```javascript
-{
-    enabled: boolean,
-    wrap: boolean,                     // Add newlines around sequences
-    macro: boolean,                    // Apply macro substitution
-    story_string_prefix: string,       // Wraps story string start
-    story_string_suffix: string,       // Wraps story string end
-    input_sequence: string,            // User message prefix
-    input_suffix: string,              // User message suffix
-    output_sequence: string,           // Assistant message prefix
-    output_suffix: string,             // Assistant message suffix
-    system_sequence: string,           // System message prefix
-    system_suffix: string,             // System message suffix
-    first_output_sequence: string,     // First assistant message override
-    last_output_sequence: string,      // Last assistant message (generation prompt)
-    first_input_sequence: string,      // First user message override
-    last_input_sequence: string,       // Last user message override
-    last_system_sequence: string,      // Last system message override
-    user_alignment_message: string,    // Filler for alignment
-    stop_sequence: string,             // Stop token
-    activation_regex: string,          // Auto-activate pattern
-    names_behavior: string,            // 'none', 'force', 'always'
-    system_same_as_user: boolean,      // Use input_sequence for system
-    skip_examples: boolean,            // Skip example formatting
-    sequences_as_stop_strings: boolean,// Export sequences to stop strings
+// script.js ~line 4495
+if (power_user.context.story_string_position === extension_prompt_types.IN_CHAT) {
+    setExtensionPrompt('STORY_STRING', combinedStoryString,
+        IN_CHAT, depth, false, role);
+    combinedStoryString = '';  // Clear to prevent duplication
 }
 ```
 
-### Message Wrapping
+### Instruct Mode Wrapping
 
-**File:** `public/scripts/instruct-mode.js:387-457` (`formatInstructModeChat()`)
+If instruct mode is enabled, the story string is wrapped:
 
-Each chat message is wrapped:
-1. Determine prefix based on role (user/assistant/system) and position (first/last/middle)
-2. Determine suffix based on role
-3. Apply macro substitution if `instruct.macro` is true
-4. Assemble: `prefix + (name?: "name: ") + content + suffix`
+```javascript
+let combinedStoryString = isInstruct
+    ? formatInstructModeStoryString(storyString, ...)
+    : storyString;
+```
 
-### Story String Wrapping
+### Depth Injection
 
-**File:** `public/scripts/instruct-mode.js:478-502` (`formatInstructModeStoryString()`)
+**File:** `public/script.js`, `doChatInject()` ~line 5400
 
-The story string is wrapped with `story_string_prefix` and `story_string_suffix`.
+Extension prompts with `IN_CHAT` position are injected directly into the chat message array at their configured depth.
 
-### Generation Prompt (Last Line)
+### Jailbreak Injection
 
-**File:** `public/scripts/instruct-mode.js:593-651` (`formatInstructModePrompt()`)
+```javascript
+// script.js ~line 4518
+if (power_user.sysprompt.enabled && power_user.sysprompt.post_history) {
+    const jailbreakText = baseChatReplace(jailbreak);
+    setExtensionPrompt('JAILBREAK', jailbreakText, IN_CHAT, 0, false, SYSTEM);
+}
+```
 
-The last line of the prompt uses `last_output_sequence` (or `output_sequence` as fallback) to prompt the model to generate as the character.
+### Final Concatenation
 
-### Stop Sequences
+**File:** `public/script.js`, inner `combine()` function ~line 4954
 
-**File:** `public/scripts/instruct-mode.js:301-367` (`getInstructStoppingSequences()`)
+```javascript
+const combine = () => {
+    // Flatten mesSend array (each element has message + extensionPrompts)
+    mesSendString = finalMesSend
+        .map(e => `${e.extensionPrompts.join('')}${e.message}`)
+        .join('');
 
-Exports the instruct sequences as stop strings. When `sequences_as_stop_strings` is true, all input/output/system sequences are added. Context template separators (`chat_start`, `example_separator`) can also be included.
+    // Add chat separator and preamble
+    mesSendString = addChatsSeparator(mesSendString);  // Prepends chat_start marker
+    mesSendString = addChatsPreamble(mesSendString);    // NovelAI: prepends preamble
+
+    // Final assembly
+    let combinedPrompt = [
+        combinedStoryString,   // Story string (character defs + system prompt + WI)
+        mesExmString,          // Example messages
+        mesSendString,         // Chat history with injections
+        generatedPromptCache,  // Continue text (for 'continue' type)
+    ].join('').replace(/\r/gm, '');
+
+    if (power_user.collapse_newlines) {
+        combinedPrompt = collapseNewlines(combinedPrompt);
+    }
+    return combinedPrompt;
+};
+```
+
+### Post-Combination Events
+
+```javascript
+// script.js ~line 5005
+await eventSource.emit(event_types.GENERATE_BEFORE_COMBINE_PROMPTS, data);
+// Extensions can override data.combinedPrompt
+
+let finalPrompt = await getCombinedPrompt(false);
+await eventSource.emit(event_types.GENERATE_AFTER_COMBINE_PROMPTS, eventData);
+finalPrompt = eventData.prompt;
+```
 
 ---
 
-## 16. OpenAI Chat Completion Assembly
+## 13. Chat Completion (OpenAI) Prompt Assembly
 
-This section covers the full assembly path for chat completion APIs (OpenAI, Claude, Gemini, etc.).
+For the `openai` main_api, the prompt is an array of message objects.
 
 ### Entry Point
 
-**File:** `public/scripts/openai.js:1433-1498` (`prepareOpenAIMessages()`)
+**File:** `public/scripts/openai.js`, `prepareOpenAIMessages()` ~line 1433
 
 ```javascript
-export async function prepareOpenAIMessages({ name2, charDescription, charPersonality,
-    scenario, worldInfoBefore, worldInfoAfter, bias, type, quietPrompt, quietImage,
-    extensionPrompts, cyclePrompt, systemPromptOverride, jailbreakPromptOverride,
-    messages, messageExamples }, dryRun)
-{
+export async function prepareOpenAIMessages({
+    name2, charDescription, charPersonality, scenario,
+    worldInfoBefore, worldInfoAfter, extensionPrompts,
+    bias, type, quietPrompt, quietImage, cyclePrompt,
+    systemPromptOverride, jailbreakPromptOverride,
+    messages, messageExamples
+}, dryRun) {
+    // 1. Create ChatCompletion instance with token budget
     const chatCompletion = new ChatCompletion();
-    chatCompletion.setTokenBudget(userSettings.openai_max_context, userSettings.openai_max_tokens);
+    chatCompletion.setTokenBudget(oai_settings.openai_max_context - oai_settings.openai_max_tokens);
 
-    const prompts = await preparePromptsForChatCompletion({ ... });
-    await populateChatCompletion(prompts, chatCompletion, { ... });
+    // 2. Prepare system prompts collection
+    const prompts = preparePromptsForChatCompletion({...});
 
+    // 3. Populate the ChatCompletion with all content
+    await populateChatCompletion(prompts, chatCompletion, {...});
+
+    // 4. Optionally squash consecutive system messages
     if (oai_settings.squash_system_messages) {
-        await chatCompletion.squashSystemMessages();
+        chatCompletion.squashSystemMessages();
     }
 
-    return [chatCompletion.getMessages().getChat(), true];
+    // 5. Extract final messages array
+    const chat = chatCompletion.getChat();
+
+    // 6. Emit event for extensions
+    await eventSource.emit(event_types.CHAT_COMPLETION_PROMPT_READY, { chat });
+
+    return [chat, tokenHandler.counts];
 }
 ```
 
-### Step 1: Prepare Prompts
+### Prompt Preparation
 
-**File:** `public/scripts/openai.js:1258-1407` (`preparePromptsForChatCompletion()`)
+**Function:** `preparePromptsForChatCompletion()` ~line 1258
 
-1. Creates array of system prompts from character data and world info
-2. Adds extension prompts (memory, author's note, vectors, smart context)
-3. Retrieves user-defined prompt order via `PromptManager.getPromptCollection()`
-4. Merges system prompts into the prompt collection at their marker positions
-5. Applies character-specific overrides for main prompt and jailbreak
+Creates a `PromptCollection` with all system-level prompts in order. This function:
 
-### Step 2: Populate Chat Completion
+1. Reads the Prompt Manager's ordered list of prompts
+2. Creates `Prompt` objects for each (world info, character fields, extension prompts, etc.)
+3. Applies character-specific system prompt overrides (if `prefer_character_prompt` is enabled)
+4. Applies character-specific jailbreak overrides
+5. Handles extension prompts positioned at BEFORE_PROMPT or IN_PROMPT
 
-**File:** `public/scripts/openai.js:1076-1238` (`populateChatCompletion()`)
+### Population
 
-Adds prompts to the `ChatCompletion` object in this order:
+**Function:** `populateChatCompletion()` ~line 1076
 
-1. `worldInfoBefore`
-2. `main` (system prompt)
-3. `worldInfoAfter`
-4. `charDescription`
-5. `charPersonality`
-6. `scenario`
-7. `personaDescription`
-8. Control prompts reserved (impersonate, quiet prompt)
-9. `nsfw` (auxiliary prompt)
-10. `jailbreak` (post-history instructions)
-11. User-defined custom prompts
-12. `enhanceDefinitions`
-13. `bias`
-14. Known extension prompts (summary, authorsNote, vectors, etc.)
-15. Custom extension prompts
-16. `dialogueExamples` (if pinned)
-17. `chatHistory`
-18. Control prompts released
+The ordered population:
 
-### Step 3: System Message Squashing
-
-**File:** `public/scripts/openai.js:3573-3607`
-
-When `squash_system_messages` is enabled, consecutive system messages without names are merged into a single message to reduce API overhead.
-
-### ChatCompletion Class
-
-**File:** `public/scripts/openai.js:3568-3700`
-
-The `ChatCompletion` class manages:
-- Token budget tracking (`tokenBudget`, `reserveBudget()`, `freeBudget()`)
-- Nested message collections (`MessageCollection`)
-- Message insertion (`insertAtStart()`, `insertAtEnd()`, `insert()`)
-- Affordability checks (`canAfford()`, `canAffordAll()`)
-- Final flattening (`getChat()`) — recursively flattens nested collections into a flat array of `{role, content, name?}` objects
+1. **Reserve for response priming** — 3 tokens for `<|start|>assistant<|message|>`
+2. **System prompts** — from the PromptCollection, in order:
+   - World Info Before
+   - Main system prompt
+   - World Info After
+   - Character Description
+   - Character Personality
+   - Scenario
+   - Persona Description (if IN_PROMPT position)
+3. **Control prompts** — impersonation prompt, quiet prompt
+4. **User-relative prompts** — NSFW, jailbreak, enhance definitions, bias
+5. **Extension prompts into main** — summarize, vectors, AN (when positioned BEFORE_PROMPT or IN_PROMPT)
+6. **Tool definitions** — pre-allocated token budget for tool schemas
+7. **Continue message handling** — repositions the last message for continuation
+8. **In-chat injection prompts** — calls `populationInjectionPrompts()` for depth-based injections
+9. **Dialogue examples** — calls `populateDialogueExamples()` with budget checking
+10. **Chat history** — calls `populateChatHistory()` filling newest-first until budget exhausted
+11. **Control prompts at end** — impersonation, quiet prompts
 
 ---
 
-## 17. Server-Side Prompt Conversion
+## 14. Context Budget / Token Management
 
-### Post-Processing
+### Token Counting
 
-**File:** `src/prompt-converters.js:83-103`
+**Client-side:** `public/scripts/tokenizers.js`
+**Server-side:** `src/tokenizers/` directory, `src/endpoints/tokenizers.js`
+
+Supported tokenizers:
+- OpenAI tiktoken (cl100k_base, o200k_base, gpt2)
+- LLaMA (SentencePiece)
+- NerdStash (NovelAI)
+- MistralAI (Tekken)
+- YiCoder
+- Jamba (AI21)
+- Claude (via API estimation)
+
+The tokenizer selection is automatic based on the current model/API.
+
+### Text Completion Budget
+
+**File:** `public/script.js`, `checkPromptSize()` ~line 4865
 
 ```javascript
-function postProcessPrompt(messages, type, names) {
-    switch (type) {
-        case PROMPT_PROCESSING_TYPE.MERGE:       // Non-strict merging
-        case PROMPT_PROCESSING_TYPE.MERGE_TOOLS:  // + tool handling
-        case PROMPT_PROCESSING_TYPE.SEMI:         // Strict (no empty messages)
-        case PROMPT_PROCESSING_TYPE.SEMI_TOOLS:   // Strict + tools
-        case PROMPT_PROCESSING_TYPE.STRICT:       // Strict + placeholders
-        case PROMPT_PROCESSING_TYPE.STRICT_TOOLS: // All options
-        case PROMPT_PROCESSING_TYPE.SINGLE:       // Everything into one message
-        default: return messages;                  // NONE: no processing
+async function checkPromptSize() {
+    const prompt = [
+        combinedStoryString,
+        mesExmString,
+        addChatsPreamble(addChatsSeparator(jointMessages)),
+        '\n',
+        modifyLastPromptLine(''),
+        generatedPromptCache,
+    ].join('');
+
+    let tokenCount = await getTokenCountAsync(prompt, power_user.token_padding);
+
+    if (tokenCount > this_max_context) {
+        if (count_exm_add > 0) {
+            count_exm_add--;         // Remove examples first
+            await checkPromptSize();
+        } else if (mesSend.length > 0) {
+            mesSend.shift();         // Then remove oldest messages
+            await checkPromptSize();
+        }
     }
 }
 ```
 
-The `mergeMessages()` function handles:
-- **Merging** consecutive messages with the same role
-- **Strict mode**: removes empty messages
-- **Placeholders**: inserts placeholder text for empty required messages
-- **Single mode**: merges everything into one message
-- **Tools**: preserves tool call/result message structure
+Priority order for removal:
+1. Example messages (removed one at a time)
+2. Oldest chat messages (removed from the beginning)
 
-### Claude (Anthropic) Conversion
+### Chat Completion Budget
 
-**File:** `src/prompt-converters.js:196-375` (`convertClaudeMessages()`)
+**File:** `public/scripts/openai.js`, `ChatCompletion` class ~line 3555
 
-1. **Extract system prompt**: leading `system` role messages become the `system` parameter (separate from messages)
-2. **Convert remaining system messages** to `user` role (Claude only supports `user`/`assistant`)
-3. **Convert content** to Claude's array format: `[{type: 'text', text: '...'}]`
-4. **Convert images** from `image_url` to base64 `{type: 'image', source: {type: 'base64', ...}}`
-5. **Move assistant images** to next user message (Claude requirement)
-6. **Add prefill** as final assistant message
-7. **Merge consecutive same-role messages**
-8. **Convert tool messages** to Claude's `tool_use`/`tool_result` format
+The `ChatCompletion` class tracks a token budget:
 
-### Google (Gemini) Conversion
+```javascript
+class ChatCompletion {
+    tokenBudget;  // Total available tokens
+    // Methods:
+    setTokenBudget(budget) { ... }
+    canAfford(message) { return this.getAvailableTokens() >= message.getTokens(); }
+    canAffordAll(messages) { ... }
+    reserveBudget(tokens) { ... }
+    freeBudget(message) { ... }
+    // When adding content, tokens are automatically deducted from budget
+}
+```
 
-**File:** `src/prompt-converters.js:431-618` (`convertGooglePrompt()`)
+The `TokenHandler` class (line 3081) tracks token counts by category:
+```javascript
+counts = {
+    'start_chat': 0,
+    'prompt': 0,
+    'bias': 0,
+    'nudge': 0,
+    'jailbreak': 0,
+    'impersonate': 0,
+    'examples': 0,
+    'conversation': 0,
+}
+```
 
-1. **Extract system prompt** into `system_instruction: {parts: [{text: '...'}]}`
-2. **Convert roles**: `system`/`tool` → `user`, `assistant` → `model`
-3. **Convert content** to `parts` array format
-4. **Convert images** to `inlineData: {mimeType, data}`
-5. **Convert tools** to `functionCall`/`functionResponse` format
-6. **Merge consecutive same-role messages** (Google requirement)
+### Context Size
 
-### Other Conversions
+```javascript
+// script.js ~line 4329
+let this_max_context = getMaxContextSize();
+// Adjusted for: Horde auto-adjust, CFG prompt doubling, token_padding
+```
 
-- **Cohere** (`convertCohereMessages()`): Converts to `ChatHistory` format
-- **AI21** (`convertAI21Messages()`): Merges system messages, alternates roles
-- **Mistral** (`convertMistralMessages()`): Tool sanitization, prefix mode
-
-### Claude Prompt Caching
-
-**File:** `src/endpoints/backends/chat-completions.js:89-98`
-
-Configurable via `claude.enableSystemPromptCache` and `claude.cachingAtDepth`. Adds `cache_control: {type: 'ephemeral'}` markers to system prompt, tools, and messages at specified depth.
+`getMaxContextSize()` returns the configured context length minus the response length (`amount_gen`).
 
 ---
 
-## 18. Model-Specific API Calls
+## 15. Macro / Variable Substitution
 
-### OpenAI / Chat Completion
+**Files:** `public/scripts/macros.js`, `public/scripts/macros/` directory
 
-**File:** `public/scripts/openai.js:2808` (`sendOpenAIRequest()`)
+### Architecture
 
-Creates generation parameters via `createGenerationParameters()` including:
-- `messages`: The assembled message array
-- `model`, `temperature`, `max_tokens`, `top_p`, `frequency_penalty`, `presence_penalty`
-- `stream`: Whether to use SSE streaming
-- `tools`: Function calling tools (if enabled)
-- `logit_bias`: Token biases
-- `stop`: Custom stop sequences
+SillyTavern has two macro engines:
+- **Legacy:** `MacrosParser` class — regex-based, always active
+- **New:** `MacroEngine` + `MacroRegistry` — parser/CST-based, activated by `power_user.experimental_macro_engine`
 
-Sends to `/api/backends/chat-completions/generate`.
+### Main Entry Point
 
-### Claude-Specific
+**File:** `public/scripts/macros.js`, `evaluateMacros()` ~line 609
 
-**File:** `src/endpoints/backends/chat-completions.js:203-382`
+Called via `substituteParams()` from `public/script.js`.
 
-Additional handling:
-- **Extended thinking**: Adds `thinking: {type: 'enabled', budget_tokens}` for Claude 3.7+ models
-- **Web search**: Adds server-managed web search tool
-- **Limited sampling**: Removes `temperature`/`top_p`/`top_k` when thinking is enabled
-- **Assistant prefill**: Pre-filled assistant response start (set via `oai_settings.assistant_prefill`)
-- **Beta headers**: `prompt-caching-2024-07-31`, `tools-2024-05-16`, etc.
+Three-phase pipeline:
+1. **Pre-env macros:** dice rolls, instruct macros, variables, utilities
+2. **Env substitution:** dynamic variables from the `env` object
+3. **Post-env macros:** context-dependent macros (time, date, chat inspection)
 
-### KoboldAI
+### Available Macros
 
-**File:** `public/scripts/kai-settings.js:174-209`
+#### Names & Participants
+| Macro | Returns |
+|-------|---------|
+| `{{user}}` | User persona name (name1) |
+| `{{char}}` | Character name (name2) |
+| `{{group}}` / `{{charIfNotGroup}}` | Group member names (comma-separated) or char name |
+| `{{groupNotMuted}}` | Group members excluding muted |
+| `{{notChar}}` | All participants except current speaker |
 
-Sends a single `prompt` string with sampler parameters (temperature, top_k, top_p, rep_pen, etc.).
+#### Character Card Fields
+| Macro | Returns |
+|-------|---------|
+| `{{description}}` / `{{charDescription}}` | Character description |
+| `{{personality}}` / `{{charPersonality}}` | Character personality |
+| `{{scenario}}` / `{{charScenario}}` | Character scenario |
+| `{{persona}}` | User persona description |
+| `{{mesExamples}}` | Formatted dialogue examples |
+| `{{mesExamplesRaw}}` | Raw dialogue examples |
+| `{{charPrompt}}` | Character's system prompt override |
+| `{{charInstruction}}` | Character's post-history instructions |
+| `{{charDepthPrompt}}` | Character's depth prompt |
+| `{{creatorNotes}}` / `{{charCreatorNotes}}` | Creator notes |
+| `{{charVersion}}` / `{{version}}` | Character version |
 
-### NovelAI
+#### Chat History
+| Macro | Returns |
+|-------|---------|
+| `{{lastMessage}}` | Last message text |
+| `{{lastMessageId}}` | Index of last message |
+| `{{lastUserMessage}}` | Last user message text |
+| `{{lastCharMessage}}` | Last character message text |
+| `{{firstIncludedMessageId}}` | First message in context window |
+| `{{firstDisplayedMessageId}}` | First displayed message |
+| `{{lastSwipeId}}` | 1-based last swipe index |
+| `{{currentSwipeId}}` | 1-based current swipe index |
 
-**File:** `public/scripts/nai-settings.js:520-612`
+#### Time & Date
+| Macro | Returns |
+|-------|---------|
+| `{{time}}` / `{{time::UTC+N}}` | Current time (HH:mm) |
+| `{{date}}` | Current date (locale format) |
+| `{{weekday}}` | Weekday name |
+| `{{isotime}}` | HH:mm format |
+| `{{isodate}}` | YYYY-MM-DD format |
+| `{{datetimeformat::FORMAT}}` | Custom moment.js format |
+| `{{idle_duration}}` / `{{idleDuration}}` | Time since last user message |
+| `{{timeDiff::time1::time2}}` | Human-readable time difference |
 
-Sends a single `input` string with NovelAI-specific parameters. Context limits vary by model (Clio: 8192, Kayra: 8192, Erato: 8192 minus special token overhead).
+#### Randomization
+| Macro | Returns |
+|-------|---------|
+| `{{roll::NdM}}` | Dice roll (e.g., `{{roll::2d6}}`) |
+| `{{random::a::b::c}}` | Random choice (re-rolled each eval) |
+| `{{pick::a::b::c}}` | Deterministic choice (stable per chat/position) |
 
-### TextGenerationWebUI
+#### Variables
+| Macro | Effect |
+|-------|--------|
+| `{{getvar::name}}` | Get local (chat) variable |
+| `{{setvar::name::value}}` | Set local variable |
+| `{{addvar::name::value}}` | Add to local variable |
+| `{{incvar::name}}` / `{{decvar::name}}` | Increment/decrement |
+| `{{getglobalvar::name}}` | Get global variable |
+| `{{setglobalvar::name::value}}` | Set global variable |
+| `{{addglobalvar::name::value}}` | Add to global variable |
+| `{{incglobalvar::name}}` / `{{decglobalvar::name}}` | Increment/decrement |
 
-**File:** `public/scripts/textgen-settings.js:1808`
+#### Instruct Mode Templates
+| Macro | Returns |
+|-------|---------|
+| `{{instructUserPrefix}}` / `{{instructInput}}` | User input prefix sequence |
+| `{{instructAssistantPrefix}}` / `{{instructOutput}}` | Assistant output prefix sequence |
+| `{{instructSystemPrefix}}` | System prefix sequence |
+| `{{instructStop}}` | Stop sequence |
+| `{{systemPrompt}}` | Active system prompt (with character override) |
+| `{{exampleSeparator}}` / `{{chatSeparator}}` | Example block separator |
+| `{{chatStart}}` | Chat start marker |
 
-Sends a single `prompt` string with extensive sampler parameters. Supports many backends (Aphrodite, TabbyAPI, KoboldCpp, Ollama, etc.).
+#### Utility
+| Macro | Returns |
+|-------|---------|
+| `{{maxPrompt}}` | Max context size in tokens |
+| `{{model}}` | Current model name |
+| `{{summary}}` | Latest chat summary |
+| `{{original}}` | Original content (for overrides) |
+| `{{newline}}` / `{{newline::N}}` | Newline(s) |
+| `{{space::N}}` | Space(s) |
+| `{{noop}}` | Empty string |
+| `{{trim}}` | Trim surrounding whitespace |
+| `{{reverse::text}}` | Reverse string |
+| `{{// comment}}` | Comment (empty output) |
+| `{{banned::word}}` | Ban word from generation |
+| `{{outlet::key}}` | World Info outlet content |
+
+### Legacy Macro Compatibility
+
+Old-style macros are also supported:
+- `<USER>`, `<BOT>`, `<CHAR>`, `<GROUP>`, `<CHARIFNOTGROUP>` — equivalent to their `{{}}` counterparts
 
 ---
 
-## 19. Final Prompt Layout
+## 16. Instruct Mode Formatting
 
-### Chat Completion APIs (OpenAI, Claude, etc.)
+**File:** `public/scripts/instruct-mode.js`
 
-The final `messages` array sent to the API, from top to bottom:
+Instruct mode wraps text completion prompts with model-specific instruction formatting (e.g., Alpaca, Llama, ChatML-style).
 
-```
-┌─────────────────────────────────────────────────────┐
-│ [SYSTEM] Main Prompt                                │  "Write {{char}}'s next reply..."
-│          (or character override)                    │
-├─────────────────────────────────────────────────────┤
-│ [SYSTEM] World Info (Before)                        │  Activated lorebook entries (position: before)
-├─────────────────────────────────────────────────────┤
-│ [SYSTEM] Persona Description                        │  User's self-description (if IN_PROMPT)
-├─────────────────────────────────────────────────────┤
-│ [SYSTEM] Character Description                      │  Character's description field
-├─────────────────────────────────────────────────────┤
-│ [SYSTEM] Character Personality                      │  Character's personality field
-├─────────────────────────────────────────────────────┤
-│ [SYSTEM] Scenario                                   │  Current scenario text
-├─────────────────────────────────────────────────────┤
-│ [SYSTEM] Enhance Definitions (if enabled)           │  "If you have more knowledge of {{char}}..."
-├─────────────────────────────────────────────────────┤
-│ [SYSTEM] Auxiliary Prompt (NSFW)                     │  User-defined auxiliary instructions
-├─────────────────────────────────────────────────────┤
-│ [SYSTEM] World Info (After)                         │  Activated lorebook entries (position: after)
-├─────────────────────────────────────────────────────┤
-│ [SYSTEM] Extension Prompts                          │  Memory/summary, vectors, smart context
-│          (at their configured positions)            │
-├─────────────────────────────────────────────────────┤
-│ [SYSTEM] [Example Chat]                             │  Example separator
-│ [SYSTEM] example_user: "..."                        │  Few-shot examples from character card
-│ [SYSTEM] example_assistant: "..."                   │
-│ [SYSTEM] [Example Chat]                             │  (repeated per example block)
-│ [SYSTEM] example_user: "..."                        │
-│ [SYSTEM] example_assistant: "..."                   │
-├─────────────────────────────────────────────────────┤
-│ [SYSTEM] [Start a new Chat]                         │  Chat boundary marker
-├─────────────────────────────────────────────────────┤
-│ ┌─ CHAT HISTORY ──────────────────────────────────┐ │
-│ │ [USER]      oldest included message             │ │
-│ │ [ASSISTANT] response                            │ │
-│ │ ...                                             │ │
-│ │ ── depth N: Author's Note (if IN_CHAT) ──────── │ │  Injected between messages
-│ │ ── depth N: WI entries (position: atDepth) ──── │ │  at their configured depths
-│ │ ── depth N: Extension prompts (IN_CHAT) ─────── │ │
-│ │ ── depth N: Persona (if AT_DEPTH) ────────────  │ │
-│ │ ...                                             │ │
-│ │ [USER]      most recent user message            │ │
-│ │ [ASSISTANT] most recent response                │ │
-│ └─────────────────────────────────────────────────┘ │
-├─────────────────────────────────────────────────────┤
-│ [SYSTEM] Post-History Instructions (Jailbreak)      │  User-defined post-history instructions
-│          (or character override)                    │
-├─────────────────────────────────────────────────────┤
-│ [SYSTEM] Group Nudge (groups only)                  │  "[Write the next reply only as {{char}}.]"
-├─────────────────────────────────────────────────────┤
-│ [SYSTEM] Impersonate Prompt (if impersonating)      │  "[Write your next reply from {{user}}'s POV]"
-├─────────────────────────────────────────────────────┤
-│ [SYSTEM] Quiet Prompt (if quiet generation)         │  Internal generation instructions
-├─────────────────────────────────────────────────────┤
-│ [ASSISTANT] Bias / Prefill                          │  Response priming text (Claude-specific)
-└─────────────────────────────────────────────────────┘
-```
+### Settings
 
-**Note:** The exact order of system prompts is user-configurable via the Prompt Manager. The layout above reflects the default ordering. Individual prompts can be reordered, enabled/disabled, or given absolute injection positions.
-
-**For Claude specifically**, the server-side converter:
-1. Extracts all leading system messages into the separate `system` parameter
-2. Converts remaining system messages to `user` role
-3. Merges consecutive same-role messages
-4. Appends assistant prefill as final message
-
-### Text Completion APIs (KoboldAI, NovelAI, etc.)
-
-The prompt is a single concatenated string:
-
-```
-┌─────────────────────────────────────────────────────┐
-│ [Story String]                                      │
-│   System prompt (if present)                        │
-│   Character description                             │
-│   {{char}}'s personality: ...                       │
-│   Scenario: ...                                     │
-│   User persona (if IN_PROMPT)                       │
-│   World Info (before + after, woven in by template) │
-├─────────────────────────────────────────────────────┤
-│ [Example Messages] (if included)                    │
-│   <START> / [Example Chat]                          │
-│   {{user}}: example input                           │
-│   {{char}}: example response                        │
-├─────────────────────────────────────────────────────┤
-│ [Chat Start Separator]                              │
-├─────────────────────────────────────────────────────┤
-│ [Chat History]                                      │
-│   oldest included message                           │
-│   ...                                               │
-│   ── depth N: injected prompts ──                   │
-│   ...                                               │
-│   most recent message                               │
-├─────────────────────────────────────────────────────┤
-│ [Generation Prompt Line]                            │
-│   {{char}}:  (or instruct output_sequence)          │
-│   + prompt bias (if any)                            │
-└─────────────────────────────────────────────────────┘
-```
-
-When instruct mode is enabled, every message is additionally wrapped with the model's instruction sequences (`input_sequence`, `output_sequence`, `system_sequence` and their suffixes).
-
-### After Server-Side Conversion (Claude Example)
-
-```json
+`power_user.instruct` contains:
+```javascript
 {
-  "model": "claude-sonnet-4-20250514",
-  "system": [
-    {"type": "text", "text": "Write {{char}}'s next reply...\n\nWorld Info...\n\nCharacter description...", "cache_control": {"type": "ephemeral"}}
-  ],
-  "messages": [
-    {"role": "user", "content": [{"type": "text", "text": "example_user: Hello"}]},
-    {"role": "assistant", "content": [{"type": "text", "text": "example_assistant: Hi there!"}]},
-    {"role": "user", "content": [{"type": "text", "text": "[Start a new Chat]\nHello!"}]},
-    {"role": "assistant", "content": [{"type": "text", "text": "Character response..."}]},
-    {"role": "user", "content": [{"type": "text", "text": "User's latest message"}]},
-    {"role": "assistant", "content": [{"type": "text", "text": "prefill text"}]}
-  ],
-  "max_tokens": 2048,
-  "temperature": 0.9,
-  "stream": true
+    enabled: boolean,
+    input_sequence: string,        // e.g., "<|im_start|>user\n" or "### Instruction:\n"
+    output_sequence: string,       // e.g., "<|im_start|>assistant\n"
+    input_suffix: string,          // e.g., "<|im_end|>\n"
+    output_suffix: string,
+    system_sequence: string,       // e.g., "<|im_start|>system\n"
+    system_suffix: string,
+    first_input_sequence: string,  // Override for first user message
+    last_input_sequence: string,   // Override for last user message
+    first_output_sequence: string, // Override for first assistant message
+    last_output_sequence: string,  // Override for last assistant message
+    last_system_sequence: string,
+    stop_sequence: string,
+    story_string_prefix: string,   // Wrap before story string
+    story_string_suffix: string,   // Wrap after story string
+    user_alignment_message: string, // Filler if last msg isn't from user
+    names_behavior: 'NONE'|'FORCE'|'ALWAYS',
+    skip_examples: boolean,
+    system_same_as_user: boolean,  // Use user sequences for system messages
+    bind_to_context: boolean,      // Auto-select with context preset
+}
+```
+
+### Key Functions
+
+| Function | Line | Purpose |
+|----------|------|---------|
+| `formatInstructModeChat()` | 387 | Wraps individual chat message with sequences |
+| `formatInstructModeStoryString()` | 478 | Wraps story string with prefix/suffix |
+| `formatInstructModeExamples()` | 511 | Formats example messages with sequences |
+| `formatInstructModePrompt()` | 593 | Formats the final generation prompt line |
+| `getInstructStoppingSequences()` | 301 | Builds stop strings array |
+| `autoSelectInstructPreset()` | 236 | Auto-selects preset based on model ID |
+
+### Sequence Selection Logic (line 395+)
+
+```
+For each message:
+  - Narrator (system): system_sequence (or input_sequence if system_same_as_user)
+  - User: input_sequence (first_input_sequence for first, last_input_sequence for last)
+  - Assistant: output_sequence (first_output_sequence for first, last_output_sequence for last)
+```
+
+---
+
+## 17. Regex Post-Processing
+
+**File:** `public/scripts/extensions/regex/engine.js` (referenced via `getRegexedString()`)
+
+Messages pass through regex scripts before being included in the prompt:
+
+```javascript
+// script.js ~line 4278
+let regexedMessage = getRegexedString(message, regexType, { isPrompt: true, depth });
+```
+
+Regex scripts can be:
+- Global (user-defined)
+- Per-character (from `character.data.extensions.regex_scripts`)
+
+Regex placements:
+- `USER_INPUT` — applied to user messages
+- `AI_OUTPUT` — applied to AI messages
+- `WORLD_INFO` — applied to World Info entries
+- `REASONING` — applied to reasoning content
+
+---
+
+## 18. Server-Side Prompt Conversion
+
+**File:** `src/prompt-converters.js`
+
+The server receives the assembled messages array from the client and performs API-specific transformations.
+
+### Processing Types
+
+**Enum:** `PROMPT_PROCESSING_TYPE`
+
+| Type | Behavior |
+|------|----------|
+| `NONE` | Pass through unchanged |
+| `MERGE` | Merge consecutive same-role messages |
+| `MERGE_TOOLS` | Merge with tool call support |
+| `SEMI` | Strict user/assistant alternation + merge |
+| `SEMI_TOOLS` | Semi with tool support |
+| `STRICT` | Strict alternation + placeholder insertion for gaps |
+| `STRICT_TOOLS` | Strict with tool support |
+| `SINGLE` | Merge all messages into single user message |
+
+### Entry Point
+
+```javascript
+// chat-completions.js line 2606
+router.post('/process', async function (request, response) {
+    const messages = postProcessPrompt(request.body.messages, request.body.type, names);
+    return response.send({ messages });
+});
+```
+
+### API-Specific Converters
+
+| Function | Target API | Line |
+|----------|-----------|------|
+| `convertClaudeMessages()` | Anthropic Messages API | 196 |
+| `convertClaudePrompt()` | Anthropic text completion (legacy) | 118 |
+| `convertGooglePrompt()` | Google Gemini | 431 |
+| `convertCohereMessages()` | Cohere | 383 |
+| `convertAI21Messages()` | AI21 Labs | 626 |
+| `convertMistralMessages()` | Mistral AI | 698 |
+| `convertXAIMessages()` | xAI (Grok) | 780 |
+| `convertTextCompletionPrompt()` | Generic text completion | 957 |
+
+### Claude Messages API Conversion
+
+`convertClaudeMessages()` (line 196):
+1. Collects leading system messages into a separate `systemPrompt` array (if `useSysPrompt`)
+2. Merges consecutive same-role messages
+3. Ensures alternating user/assistant pattern
+4. Adds assistant prefill to last message if applicable
+5. Returns `{ messages, systemPrompt }`
+
+### Google Gemini Conversion
+
+`convertGooglePrompt()` (line 431):
+1. Extracts system instruction from leading system messages
+2. Maps roles: user→user, assistant→model, system→user
+3. Prepends character names to messages
+4. Handles inline media (images, video, audio) as `inlineData` parts
+5. Handles tool calls as `functionCall`/`functionResponse` parts
+6. Handles reasoning signatures (Gemini 2.5/3)
+7. Merges consecutive same-role messages
+8. Returns `{ contents, system_instruction }`
+
+---
+
+## 19. Model-Specific Formatting
+
+**File:** `public/scripts/openai.js`, `createGenerationParameters()` ~line 2447
+
+After prompt assembly, generation parameters are customized per API source:
+
+### Common Parameters
+- `messages` — the assembled messages array
+- `model` — selected model name
+- `temperature`, `frequency_penalty`, `presence_penalty`, `top_p`
+- `max_tokens` — response budget
+- `stream` — streaming flag
+- `stop` — stop sequences
+
+### Source-Specific
+
+**Claude:**
+- `top_k`, `use_sysprompt` flag, `assistant_prefill` string
+- `prompt_processing_type` (merge/semi/strict)
+
+**OpenRouter:**
+- `top_k`, `min_p`, `repetition_penalty`
+- `provider` settings (model routing, fallbacks, required parameters)
+
+**Google/Vertex:**
+- `safety_settings`, `thinking` configuration
+- System instruction separation
+
+**Mistral:**
+- `safe_prompt` flag
+
+### Prompt Caching
+
+**File:** `src/prompt-converters.js`
+
+- `cachingAtDepthForClaude()` (line 983) — adds `cache_control` to messages at specified depth
+- `cachingAtDepthForOpenRouterClaude()` (line 1018) — similar for OpenRouter
+- `cachingSystemPromptForOpenRouter()` (line 1065) — caches system prompts
+
+---
+
+## 20. Prompt Manager (Chat Completion)
+
+**File:** `public/scripts/PromptManager.js`
+
+The Prompt Manager controls the ordering and enabled state of all prompt components for the chat completion path.
+
+### Prompt Class (line 182)
+
+```javascript
+class Prompt {
+    identifier;            // Unique ID (e.g., 'main', 'jailbreak', 'charDescription')
+    role;                  // 'system', 'user', 'assistant'
+    content;               // Prompt text
+    name;                  // Display name
+    system_prompt;         // Is this a system prompt?
+    injection_position;    // RELATIVE (0) or ABSOLUTE (1)
+    injection_depth;       // For ABSOLUTE: how many messages from bottom
+    injection_order;       // Sort order (default 100)
+    injection_trigger;     // Generation type triggers (which types activate this)
+    forbid_overrides;      // Cannot be overridden by character prompts
+    extension;             // Added by extension?
+    marker;                // Marker prompt (read-only content)?
+}
+```
+
+### PromptCollection (line 219)
+
+Container for ordered prompts with `add()`, `get()`, `has()`, `override()`, `index()` methods.
+
+### Ordering Strategy
+
+- **Global** — all characters share one prompt order (`dummyId: 100000`)
+- **Character** — each character has its own prompt order
+
+### Default Prompt Order
+
+The system ships with a default ordering. The user can reorder, enable/disable, and add custom prompts via the Prompt Manager UI.
+
+### Built-in Prompt Identifiers
+
+| Identifier | Source |
+|------------|--------|
+| `main` | System prompt |
+| `nsfw` | NSFW prompt |
+| `jailbreak` | Jailbreak / post-history instructions |
+| `enhanceDefinitions` | Enhance definitions prompt |
+| `charDescription` | Character description (pulled from card) |
+| `charPersonality` | Character personality (pulled from card) |
+| `scenario` | Scenario (pulled from card) |
+| `personaDescription` | User persona description |
+| `worldInfoBefore` | World Info (before character) |
+| `worldInfoAfter` | World Info (after character) |
+| `dialogueExamples` | Example messages marker |
+| `chatHistory` | Chat history marker |
+
+### Prompt Sources (line 302)
+
+Some prompts are "pulled" from character data rather than stored in the prompt manager:
+```javascript
+promptSources = {
+    charDescription: 'Character Description',
+    charPersonality: 'Character Personality',
+    scenario: 'Scenario',
+    personaDescription: 'Persona Description',
+    worldInfoBefore: 'World Info (↑Char)',
+    worldInfoAfter: 'World Info (↓Char)',
 }
 ```
 
 ---
 
-## Appendix: Key File Reference
+## 21. Final Prompt Layout Diagrams
 
-| File | Purpose |
-|------|---------|
-| `public/script.js` | Main client entry point, `Generate()` orchestrator |
-| `public/scripts/openai.js` | Chat completion assembly, `prepareOpenAIMessages()`, `ChatCompletion` class |
-| `public/scripts/PromptManager.js` | Prompt ordering, `Prompt` class, default prompt definitions |
-| `public/scripts/world-info.js` | World info/lorebook scanning, activation, budget, insertion |
-| `public/scripts/authors-note.js` | Author's note / floating prompt system |
-| `public/scripts/instruct-mode.js` | Instruct mode message wrapping and formatting |
-| `public/scripts/power-user.js` | Context settings, `renderStoryString()`, persona positions |
-| `public/scripts/personas.js` | User persona loading and management |
-| `public/scripts/tokenizers.js` | Token counting (17 supported tokenizers) |
-| `public/scripts/macros/engine/MacroEngine.js` | Macro substitution engine |
-| `public/scripts/macros/*.js` | Macro definitions (env, time, chat, variables, instruct, core) |
-| `public/scripts/extensions/regex/engine.js` | Regex post-processing scripts |
-| `public/scripts/sysprompt.js` | System prompt preset management |
-| `public/scripts/char-data.js` | Character data loading |
-| `src/prompt-converters.js` | Server-side format conversion (Claude, Google, Cohere, etc.) |
-| `src/endpoints/backends/chat-completions.js` | Server-side API call dispatch |
-| `src/character-card-parser.js` | Character card file parsing |
+### Text Completion (KoboldAI / text-generation-webui / NovelAI)
+
+```
+┌─────────────────────────────────────────────────┐
+│ [NovelAI only: preamble]                        │
+├─────────────────────────────────────────────────┤
+│ STORY STRING (Handlebars template):             │
+│   ├── System prompt (if enabled)                │
+│   ├── [BEFORE_PROMPT extension prompts]         │
+│   ├── World Info "before" entries                │
+│   ├── Character description                     │
+│   ├── Character personality                     │
+│   ├── Scenario                                  │
+│   ├── World Info "after" entries                 │
+│   ├── [IN_PROMPT extension prompts]             │
+│   └── User persona (if IN_PROMPT position)      │
+│   [Instruct mode: story_string_prefix/suffix]   │
+├─────────────────────────────────────────────────┤
+│ EXAMPLE MESSAGES:                               │
+│   ├── <START> block 1                           │
+│   ├── <START> block 2                           │
+│   └── ... (budget-limited)                      │
+├─────────────────────────────────────────────────┤
+│ [chat_start separator]                          │
+├─────────────────────────────────────────────────┤
+│ CHAT HISTORY (oldest to newest):                │
+│   ├── User: message 1                           │
+│   ├── Char: message 2                           │
+│   ├── ... (budget-limited, oldest removed first)│
+│   │                                             │
+│   │ AT DEPTH INJECTIONS (spliced in):           │
+│   │   ├── WI depth entries                      │
+│   │   ├── Author's Note (depth 4 default)       │
+│   │   ├── Summarize memory                      │
+│   │   ├── Vector memories                       │
+│   │   ├── Persona desc (if AT_DEPTH)            │
+│   │   ├── Character depth prompt                │
+│   │   └── Jailbreak (depth 0)                   │
+│   │                                             │
+│   ├── User: latest message                      │
+│   └── [prompt bias / instruct prompt line]      │
+├─────────────────────────────────────────────────┤
+│ [generatedPromptCache — for 'continue' type]    │
+└─────────────────────────────────────────────────┘
+```
+
+### Chat Completion (OpenAI / Claude / Gemini / etc.)
+
+```
+┌─────────────────────────────────────────────────┐
+│ SYSTEM MESSAGES (ordered by Prompt Manager):    │
+│   ├── World Info Before          [system]       │
+│   ├── Main System Prompt         [system]       │
+│   ├── World Info After           [system]       │
+│   ├── Character Description      [system]       │
+│   ├── Character Personality      [system]       │
+│   ├── Scenario                   [system]       │
+│   ├── Persona Description        [system]       │
+│   ├── NSFW Prompt                [system]       │
+│   ├── Enhance Definitions        [system]       │
+│   ├── Summarize Memory           [system]       │
+│   ├── Vector Memories            [system]       │
+│   └── [Custom extension prompts] [system]       │
+├─────────────────────────────────────────────────┤
+│ DIALOGUE EXAMPLES (budget-limited):             │
+│   ├── [Start a new chat]         [system]       │
+│   ├── example_user: Hi           [system+name]  │
+│   ├── example_assistant: Hello   [system+name]  │
+│   ├── [Start a new chat]         [system]       │
+│   └── ...                                       │
+├─────────────────────────────────────────────────┤
+│ CHAT HISTORY (budget-limited, newest-first add):│
+│   ├── User message 1             [user]         │
+│   ├── Assistant message 1        [assistant]    │
+│   │                                             │
+│   │ DEPTH INJECTIONS (inserted at depth N):     │
+│   │   ├── Author's Note          [system@d4]    │
+│   │   ├── WI depth entries       [varies@dN]    │
+│   │   ├── Persona (AT_DEPTH)     [system@d2]    │
+│   │   └── Character depth prompt [varies@dN]    │
+│   │                                             │
+│   ├── User message N             [user]         │
+│   ├── Assistant message N        [assistant]    │
+│   └── [Tool call/result messages if applicable] │
+├─────────────────────────────────────────────────┤
+│ CONTROL PROMPTS (at end):                       │
+│   ├── Jailbreak                  [system]       │
+│   ├── Impersonation prompt       [system]       │
+│   ├── Quiet prompt (extensions)  [system]       │
+│   ├── Group nudge                [system]       │
+│   └── Prompt bias                [system]       │
+├─────────────────────────────────────────────────┤
+│ [Assistant prefill — for Claude/continuation]   │
+└─────────────────────────────────────────────────┘
+```
+
+### Server-Side Transformation (for Claude Messages API)
+
+```
+Client sends: [{role, content, name}, ...]
+
+Server transforms (convertClaudeMessages):
+  1. Extract leading system messages → systemPrompt[]
+  2. Merge consecutive same-role messages
+  3. Ensure user/assistant alternation
+  4. Apply prompt caching markers
+  5. Add assistant prefill
+
+API receives:
+  system: [{type: "text", text: "..."}, ...]
+  messages: [{role: "user", content: "..."}, {role: "assistant", content: "..."}, ...]
+```
+
+### Server-Side Transformation (for Google Gemini)
+
+```
+Client sends: [{role, content, name}, ...]
+
+Server transforms (convertGooglePrompt):
+  1. Extract system messages → system_instruction
+  2. Map roles (assistant→model, system→user)
+  3. Convert media to inlineData parts
+  4. Convert tool calls to functionCall/functionResponse
+  5. Merge consecutive same-role messages
+
+API receives:
+  system_instruction: {parts: [{text: "..."}]}
+  contents: [{role: "user", parts: [{text: "..."}]}, {role: "model", parts: [{text: "..."}]}]
+```
